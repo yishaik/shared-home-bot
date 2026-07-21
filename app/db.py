@@ -151,13 +151,23 @@ class Store:
 
     async def recent_messages(self, limit: int = 40) -> list[dict[str, Any]]:
         cur = await self.db.execute(
-            """SELECT telegram_user_id, telegram_username, display_name, role, content,
+            """SELECT id, telegram_user_id, telegram_username, display_name, role, content,
                       tool_name, tool_call_id, created_at
                FROM messages ORDER BY id DESC LIMIT ?""",
             (limit,),
         )
         rows = await cur.fetchall()
         return [dict(r) for r in reversed(rows)]
+
+    async def messages_after(self, after_id: int, limit: int = 400) -> list[dict[str, Any]]:
+        """Messages with id > after_id, oldest first (for rolling summarization)."""
+        cur = await self.db.execute(
+            """SELECT id, telegram_user_id, telegram_username, display_name, role, content,
+                      tool_name, tool_call_id, created_at
+               FROM messages WHERE id > ? ORDER BY id ASC LIMIT ?""",
+            (after_id, limit),
+        )
+        return [dict(r) for r in await cur.fetchall()]
 
     # ── shared memory KV ──────────────────────────────────────
     async def set_memory(

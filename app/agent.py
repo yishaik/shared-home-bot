@@ -15,7 +15,9 @@ from app.tools import tool_specs, run_tool
 log = logging.getLogger("homebot.agent")
 
 
-def system_prompt(settings: Settings, snapshot: str, speaker: str) -> str:
+def system_prompt(settings: Settings, snapshot: str, speaker: str, core: str = "", summary: str = "") -> str:
+    core_block = f"\n## Core memory (always-true household essentials — keep it curated)\n{core}\n" if core else ""
+    summary_block = f"\n## Conversation so far (rolling summary of earlier messages)\n{summary}\n" if summary else ""
     google_line = (
         "\n- Google is connected: gcal_* for the shared Google Calendar, gdoc_* for Google Docs, gsheet_* for Google Sheets "
         "(e.g. an expense tracker or list). The local event tools store household events; when the user wants something on their "
@@ -35,7 +37,8 @@ Rules:
 - For destructive or ambiguous actions, explain what you need instead of guessing.
 - After a successful action, confirm it in one short line and mention the most useful next action only when relevant.
 - Never expose secrets, raw tool output or internal errors.
-
+- Keep Core memory curated: when you learn a lasting essential (a household member/name, a recurring routine, a major ongoing situation), use core_memory_append; use core_memory_replace to fix or prune it. Keep it short — details belong in facts/notes.
+{core_block}{summary_block}
 {snapshot}
 """
 
@@ -68,12 +71,64 @@ class HomeAgent:
         async with self._household_lock:
             return await self._reply_locked(user_text=user_text, user_id=user_id, username=username, display_name=display_name)
 
+    async def _build_system(self, speaker: str, query: str) -> str:
+        snapshot = await self.store.snapshot_for_prompt(query)
+        core = await self.store.get_core_memory()
+        summary = await self.store.get_conv_summary()
+        return system_prompt(self.settings, snapshot, speaker, core=core, summary=summary)
+
+    def _render_for_summary(self, rows: list[dict[str, Any]]) -> str:
+        out: list[str] = []
+        for r in rows:
+            who = r.get("display_name") or r.get("telegram_username") or r.get("telegram_user_id")
+            content = (r["content"] or "")[:600]
+            if r["role"] == "user":
+                out.append(f"{who}: {content}")
+            elif r["role"] == "assistant":
+                out.append(f"assistant: {content}")
+            elif r["role"] == "tool":
+                out.append(f"(tool {r.get('tool_name') or 'tool'}) {content[:200]}")
+        return "\n".join(out)[:8000]
+
+    async def _summarize(self, prev: str, block: str) -> str:
+        prompt = (
+            "You maintain a rolling summary of a shared household-assistant conversation. "
+            "Fold the NEW MESSAGES into the CURRENT SUMMARY. Preserve durable facts, decisions, plans, "
+            "names and open threads; drop small talk and resolved trivia. Keep it tight (<= ~1200 chars). "
+            "Write in the conversation's language (Hebrew if it is Hebrew).\n\n"
+            f"CURRENT SUMMARY:\n{prev or '(none yet)'}\n\nNEW MESSAGES:\n{block}\n\nReturn only the updated summary."
+        )
+        try:
+            resp = await self.client.chat.completions.create(
+                model=self.settings.summary_model,
+                messages=[{"role": "user", "content": prompt}], temperature=0.2)
+            return (resp.choices[0].message.content or "").strip()[:2400]
+        except Exception:
+            log.exception("summary fold failed")
+            return ""
+
+    async def _maybe_fold_summary(self) -> None:
+        """Fold messages older than the verbatim window into the rolling summary."""
+        try:
+            keep = max(4, self.settings.verbatim_messages)
+            last_id = await self.store.get_conv_summary_last_id()
+            pending = await self.store.messages_after(last_id)  # oldest first
+            foldable = pending[:-keep] if len(pending) > keep else []
+            if len(foldable) < 8:  # amortise — summarise only once a batch builds up
+                return
+            new_summary = await self._summarize(await self.store.get_conv_summary(), self._render_for_summary(foldable))
+            if new_summary:
+                await self.store.set_conv_summary(new_summary, foldable[-1]["id"])
+                log.info("summary folded through message id=%s", foldable[-1]["id"])
+        except Exception:
+            log.exception("maybe_fold_summary failed — continuing")
+
     async def _reply_locked(self, *, user_text: str, user_id: int, username: str | None, display_name: str | None) -> str:
         speaker = display_name or username or str(user_id)
         await self.store.add_message(role="user", content=user_text, user_id=user_id, username=username, display_name=display_name)
-        snapshot = await self.store.snapshot_for_prompt(user_text)
-        history = await self.store.recent_messages(self.settings.max_context_messages)
-        messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt(self.settings, snapshot, speaker)}, *self._history_to_openai(history)]
+        await self._maybe_fold_summary()
+        history = await self.store.recent_messages(self.settings.verbatim_messages)
+        messages: list[dict[str, Any]] = [{"role": "system", "content": await self._build_system(speaker, user_text)}, *self._history_to_openai(history)]
 
         async with asyncio.timeout(55):
             for _ in range(8):
@@ -99,8 +154,7 @@ class HomeAgent:
                         result = await run_tool(self.store, self.service, call.function.name, args, user_id, settings=self.settings)
                         await self.store.add_message(role="tool", content=result, user_id=user_id, username=username, display_name=display_name, tool_name=call.function.name, tool_call_id=call.id)
                         messages.append({"role": "tool", "tool_call_id": call.id, "content": result})
-                    snapshot = await self.store.snapshot_for_prompt(user_text)
-                    messages[0] = {"role": "system", "content": system_prompt(self.settings, snapshot, speaker)}
+                    messages[0] = {"role": "system", "content": await self._build_system(speaker, user_text)}
                     continue
 
                 text = (message.content or "").strip() or "הפעולה הושלמה."

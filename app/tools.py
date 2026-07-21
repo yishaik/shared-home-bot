@@ -38,6 +38,8 @@ TOOL_SPECS: list[dict[str, Any]] = [
     _tool("people_list", "List people in household memory.", {}),
     _tool("setting_set", "Set a household preference.", {"key": {"type": "string"}, "value": {"type": "string"}}, ["key", "value"]),
     _tool("setting_get", "Get one household preference or list all.", {"key": {"type": "string"}}),
+    _tool("core_memory_append", "Append a lasting essential to Core memory (a household member/name, a recurring routine, a major ongoing situation). Keep it short — details go in facts/notes.", {"text": {"type": "string"}}, ["text"]),
+    _tool("core_memory_replace", "Fix or prune Core memory by replacing an exact substring (use an empty replacement to delete it).", {"find": {"type": "string"}, "replace": {"type": "string", "default": ""}}, ["find"]),
 ]
 
 
@@ -125,6 +127,11 @@ async def run_tool(store: Store, service: HomeService, name: str, arguments: dic
             if arguments.get("key"):
                 return json.dumps({"ok": True, "key": arguments["key"], "value": await store.get_setting(arguments["key"])}, ensure_ascii=False)
             return json.dumps({"ok": True, "settings": await store.list_settings()}, ensure_ascii=False)
+        if name == "core_memory_append":
+            return json.dumps({"ok": True, "core_memory": await store.append_core_memory(arguments["text"])}, ensure_ascii=False)
+        if name == "core_memory_replace":
+            ok = await store.replace_core_memory(arguments["find"], arguments.get("replace") or "")
+            return json.dumps({"ok": ok}, ensure_ascii=False)
         return json.dumps({"ok": False, "error": f"unknown tool {name}"})
     except Exception as exc:
         return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)

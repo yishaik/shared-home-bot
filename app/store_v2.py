@@ -301,6 +301,39 @@ class Store(LegacyStore):
         await self.db.commit()
         return cur.rowcount > 0
 
+    # ── tiered memory: core block + rolling conversation summary ──────────
+    async def get_core_memory(self) -> str:
+        return await self.get_setting("_core_memory", "")
+
+    async def set_core_memory(self, text: str) -> None:
+        await self.set_setting("_core_memory", (text or "").strip()[:2000])
+
+    async def append_core_memory(self, text: str) -> str:
+        cur = await self.get_core_memory()
+        combined = (cur + "\n" + text.strip()).strip() if cur else text.strip()
+        await self.set_core_memory(combined)
+        return combined[:2000]
+
+    async def replace_core_memory(self, find: str, replace: str) -> bool:
+        cur = await self.get_core_memory()
+        if not find or find not in cur:
+            return False
+        await self.set_core_memory(cur.replace(find, replace))
+        return True
+
+    async def get_conv_summary(self) -> str:
+        return await self.get_setting("_conv_summary", "")
+
+    async def get_conv_summary_last_id(self) -> int:
+        try:
+            return int(await self.get_setting("_conv_summary_last_id", "0") or 0)
+        except ValueError:
+            return 0
+
+    async def set_conv_summary(self, text: str, last_id: int) -> None:
+        await self.set_setting("_conv_summary", (text or "").strip()[:2500])
+        await self.set_setting("_conv_summary_last_id", str(int(last_id)))
+
     async def dashboard(self) -> dict[str, Any]:
         todos, shopping, events = await self.list_todos(False), await self.shop_list(False), await self.list_events()
         return {

@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     port: int = Field(default=8080, alias="PORT")
     database_path: str = Field(default="./data/home.db", alias="DATABASE_PATH")
     max_context_messages: int = Field(default=40, alias="MAX_CONTEXT_MESSAGES")
+    verbatim_messages: int = Field(default=16, alias="VERBATIM_MESSAGES")
+    summary_model: str = Field(default="gpt-4o-mini", alias="SUMMARY_MODEL")
     max_init_data_age_seconds: int = Field(default=3600, alias="MAX_INIT_DATA_AGE_SECONDS")
     session_ttl_seconds: int = Field(default=86400, alias="SESSION_TTL_SECONDS")
     app_session_secret: str = Field(default="", alias="APP_SESSION_SECRET")
