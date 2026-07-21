@@ -4,8 +4,9 @@ import html
 import logging
 import uuid
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, WebAppInfo
-from telegram.constants import ChatAction, ParseMode
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update, WebAppInfo
+from telegram.constants import ChatAction, ParseMode, ReactionEmoji
+from telegram.error import TelegramError
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from app.agent import HomeAgent
@@ -24,6 +25,20 @@ def _app_keyboard(settings: Settings) -> InlineKeyboardMarkup | None:
     if not settings.resolved_mini_app_url:
         return None
     return InlineKeyboardMarkup([[InlineKeyboardButton("🏠 פתיחת הבית", web_app=WebAppInfo(url=settings.resolved_mini_app_url))]])
+
+
+async def _set_reaction_safely(message: Message, reaction: ReactionEmoji, *, is_big: bool = False) -> None:
+    """Set a best-effort status reaction without interrupting message handling."""
+    try:
+        await message.set_reaction(reaction=reaction, is_big=is_big)
+    except TelegramError as exc:
+        log.warning(
+            "could not set reaction chat_id=%s message_id=%s reaction=%s: %s",
+            message.chat_id,
+            message.message_id,
+            reaction,
+            exc,
+        )
 
 
 async def _authorized(update: Update, settings: Settings) -> bool:
@@ -183,21 +198,25 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     await context.bot.send_chat_action(chat_id=message.chat_id, action=ChatAction.TYPING)
+    await _set_reaction_safely(message, ReactionEmoji.EYES)
     progress = await message.reply_text("מטפל בזה…")
     try:
         answer = await agent.reply(user_text=message.text, user_id=user.id, username=user.username, display_name=user.full_name)
     except Exception:
         incident = uuid.uuid4().hex[:8]
         log.exception("agent failed incident=%s", incident)
+        await _set_reaction_safely(message, ReactionEmoji.THUMBS_DOWN, is_big=True)
         await progress.edit_text(f"לא הצלחתי להשלים את הפעולה. אפשר לנסות שוב.\nקוד תקלה: <code>{incident}</code>", parse_mode=ParseMode.HTML)
         return
 
     if len(answer) <= 4000:
         await progress.edit_text(answer)
+        await _set_reaction_safely(message, ReactionEmoji.THUMBS_UP, is_big=True)
         return
     await progress.delete()
     for offset in range(0, len(answer), 4000):
         await message.reply_text(answer[offset : offset + 4000])
+    await _set_reaction_safely(message, ReactionEmoji.THUMBS_UP, is_big=True)
 
 
 def build_application(settings: Settings, store: Store, service: HomeService, agent: HomeAgent) -> Application:
