@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<meta name="theme-color" content="#0b1220"/>
+<title>Shared Home Bot — מדריך פריסה</title>
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet"/>
+<style>
+:root{
+  --bg:#0b1220;--card:#121a2e;--border:rgba(255,255,255,.1);
+  --text:#eef2ff;--muted:#93a0bf;--a:#6ea8ff;--c:#34d399;--d:#fbbf24;--b:#a78bfa;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:Heebo,system-ui,sans-serif;background:var(--bg);color:var(--text);line-height:1.55;
+  background-image:radial-gradient(800px 400px at 10% -10%,rgba(110,168,255,.18),transparent 55%),
+  radial-gradient(600px 300px at 100% 0%,rgba(167,139,250,.14),transparent 50%)}
+a{color:var(--a)}
+.wrap{max-width:760px;margin:0 auto;padding:18px 14px 72px}
+.hero{border:1px solid var(--border);border-radius:20px;padding:20px 16px;margin-bottom:14px;
+  background:linear-gradient(145deg,rgba(110,168,255,.12),rgba(167,139,250,.08))}
+.hero h1{margin:0 0 8px;font-size:1.45rem}
+.hero p{margin:0;color:var(--muted);font-size:.95rem}
+.badges{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.badge{font-size:.72rem;font-weight:700;padding:5px 10px;border-radius:999px;border:1px solid var(--border);color:var(--muted)}
+.badge.ok{color:var(--c);border-color:rgba(52,211,153,.35)}
+.card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:16px 14px;margin:0 0 12px}
+.card h2{margin:0 0 10px;font-size:1.12rem}
+.card h3{margin:14px 0 6px;font-size:1rem}
+.card ol,.card ul{margin:8px 0;padding-inline-start:1.2rem}
+.card li{margin:7px 0;color:#d5def5}
+.step{display:grid;grid-template-columns:36px 1fr;gap:10px;margin:12px 0;align-items:start}
+.step .n{width:36px;height:36px;border-radius:10px;display:grid;place-items:center;font-weight:800;
+  background:rgba(110,168,255,.15);color:var(--a);font-family:"JetBrains Mono",monospace;font-size:.85rem}
+.step strong{display:block;margin-bottom:2px}
+.step span{color:var(--muted);font-size:.9rem}
+pre,code{font-family:"JetBrains Mono",ui-monospace,monospace}
+pre{background:#070b14;border:1px solid var(--border);border-radius:12px;padding:12px;overflow-x:auto;
+  font-size:.76rem;direction:ltr;text-align:left;color:#c7d2fe;line-height:1.45}
+code{font-size:.85em;background:rgba(255,255,255,.06);padding:1px 5px;border-radius:4px}
+.links a{display:block;padding:11px 12px;margin:6px 0;border-radius:12px;border:1px solid var(--border);
+  background:rgba(0,0,0,.22);text-decoration:none;color:var(--text);font-weight:700}
+.links a small{display:block;color:var(--muted);font-weight:500;font-size:.8rem;margin-top:3px}
+.note{padding:12px;border-radius:12px;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.25);
+  color:#fde68a;font-size:.9rem;margin:10px 0}
+.ok{padding:12px;border-radius:12px;background:rgba(52,211,153,.08);border:1px solid rgba(52,211,153,.25);
+  color:#a7f3d0;font-size:.9rem;margin:10px 0}
+table{width:100%;border-collapse:collapse;font-size:.86rem}
+td,th{border:1px solid var(--border);padding:8px;text-align:right;vertical-align:top}
+th{color:var(--muted);font-weight:600}
+.toc a{display:block;padding:7px 0;color:var(--a);text-decoration:none;font-weight:600}
+footer{text-align:center;color:var(--muted);font-size:.78rem;margin-top:22px}
+.ltr{direction:ltr;text-align:left}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="hero">
+    <h1>Shared Home Bot — מדריך פריסה</h1>
+    <p>בוט טלגרם לזוג: זיכרון וכלים משותפים. פריסה ב-Railway + OpenAI API.</p>
+    <div class="badges">
+      <span class="badge ok">זיכרון משותף</span>
+      <span class="badge">Railway</span>
+      <span class="badge">OpenAI</span>
+      <span class="badge">GitHub Private</span>
+    </div>
+  </header>
+
+  <nav class="card toc">
+    <h2>תוכן</h2>
+    <a href="#links">1. קישורים חשובים</a>
+    <a href="#what">2. מה מקבלים</a>
+    <a href="#prep">3. הכנת סודות</a>
+    <a href="#github">4. GitHub</a>
+    <a href="#railway">5. פריסה ב-Railway</a>
+    <a href="#vars">6. משתני סביבה</a>
+    <a href="#verify">7. בדיקה</a>
+    <a href="#tools">8. פקודות וכלים</a>
+    <a href="#local">9. הרצה מקומית</a>
+    <a href="#trouble">10. תקלות נפוצות</a>
+  </nav>
+
+  <section class="card links" id="links">
+    <h2>1. קישורים חשובים</h2>
+    <a href="https://github.com/yishaik/shared-home-bot" target="_blank" rel="noopener">
+      GitHub — yishaik/shared-home-bot
+      <small>קוד המקור (מומלץ Private)</small>
+    </a>
+    <a href="https://railway.app/new" target="_blank" rel="noopener">
+      Railway — New project
+      <small>https://railway.app/new</small>
+    </a>
+    <a href="https://railway.app/dashboard" target="_blank" rel="noopener">
+      Railway Dashboard
+      <small>שירותים, Volumes, Variables</small>
+    </a>
+    <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">
+      OpenAI API Keys
+      <small>חובה מפתח API + בילינג</small>
+    </a>
+    <a href="https://platform.openai.com/settings/organization/billing" target="_blank" rel="noopener">
+      OpenAI Billing
+    </a>
+    <a href="https://t.me/BotFather" target="_blank" rel="noopener">
+      @BotFather
+      <small>יצירת בוט + טוקן</small>
+    </a>
+    <a href="https://t.me/userinfobot" target="_blank" rel="noopener">
+      @userinfobot
+      <small>מספר user id בטלגרם</small>
+    </a>
+    <a href="https://docs.railway.com/guides/volumes" target="_blank" rel="noopener">
+      Railway Volumes
+      <small>שמירת DB ב-/data</small>
+    </a>
+  </section>
+
+  <section class="card" id="what">
+    <h2>2. מה מקבלים</h2>
+    <ul>
+      <li><b>מוח אחד</b> לשני בני הזוג — לא סשנים נפרדים</li>
+      <li>זיכרון, משימות, קניות, הערות, אירועים, מלאי, אנשים</li>
+      <li>המודל קורא/כותב דרך tools</li>
+      <li>Webhook ב-Railway / long-poll מקומי</li>
+    </ul>
+    <div class="note">
+      <b>חשוב:</b> מנוי ChatGPT/Codex באפליקציה <b>לא מספיק</b>.
+      צריך <b>OpenAI API key</b> עם billing פעיל. אפשר להגדיר <code>OPENAI_MODEL</code>
+      למודל שזמין בחשבון (למשל <code>gpt-4o</code>).
+    </div>
+  </section>
+
+  <section class="card" id="prep">
+    <h2>3. הכנת סודות (~10 דקות)</h2>
+    <div class="step"><div class="n">1</div><div>
+      <strong>צור בוט</strong>
+      <span><a href="https://t.me/BotFather">@BotFather</a> → <code>/newbot</code> → שמור טוקן.</span>
+    </div></div>
+    <div class="step"><div class="n">2</div><div>
+      <strong>שני user IDs</strong>
+      <span>כל אחד כותב לבוט (או ל-<a href="https://t.me/userinfobot">@userinfobot</a>).
+      אחרי דיפלוי: <code>/whoami</code> → מכניסים ל-<code>ALLOWED_USER_IDS</code>.</span>
+    </div></div>
+    <div class="step"><div class="n">3</div><div>
+      <strong>מפתח OpenAI</strong>
+      <span><a href="https://platform.openai.com/api-keys">API keys</a> +
+      <a href="https://platform.openai.com/settings/organization/billing">billing</a>.</span>
+    </div></div>
+  </section>
+
+  <section class="card" id="github">
+    <h2>4. GitHub</h2>
+    <p>הריפו:</p>
+    <pre class="ltr">https://github.com/yishaik/shared-home-bot</pre>
+    <p>אם צריך לדחוף מחדש מהמחשב:</p>
+    <pre class="ltr">cd shared-home-bot
+git add -A && git commit -m "update"
+git push -u origin main</pre>
+  </section>
+
+  <section class="card" id="railway">
+    <h2>5. פריסה ב-Railway</h2>
+    <div class="step"><div class="n">1</div><div>
+      <strong>פרויקט חדש</strong>
+      <span><a href="https://railway.app/new">railway.app/new</a> → Deploy from GitHub → בחר <code>shared-home-bot</code>.</span>
+    </div></div>
+    <div class="step"><div class="n">2</div><div>
+      <strong>Volume</strong>
+      <span>Service → Volumes → Add → mount path: <code>/data</code> (חובה לזיכרון).</span>
+    </div></div>
+    <div class="step"><div class="n">3</div><div>
+      <strong>Variables</strong>
+      <span>הדבק את הבלוק מסעיף 6 (עם הערכים האמיתיים).</span>
+    </div></div>
+    <div class="step"><div class="n">4</div><div>
+      <strong>דומיין</strong>
+      <span>Settings → Networking → Generate domain.
+      העתק ל-<code>PUBLIC_URL</code> (בלי / בסוף) → Redeploy.</span>
+    </div></div>
+    <div class="step"><div class="n">5</div><div>
+      <strong>Health</strong>
+      <span>פתח <code>https://YOUR-DOMAIN/health</code> → <code>{"status":"ok"}</code>.</span>
+    </div></div>
+    <div class="ok">
+      כש-<code>PUBLIC_URL</code> מוגדר, הבוט רושם webhook אוטומטית ל-<code>/telegram/webhook</code>.
+    </div>
+  </section>
+
+  <section class="card" id="vars">
+    <h2>6. משתני סביבה</h2>
+    <pre class="ltr">TELEGRAM_BOT_TOKEN=123456:ABC...
+ALLOWED_USER_IDS=111111111,222222222
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o
+DATABASE_PATH=/data/home.db
+PUBLIC_URL=https://YOUR-SERVICE.up.railway.app
+HOME_NAME=Our Home
+BOT_DISPLAY_NAME=Home</pre>
+    <table>
+      <tr><th>משתנה</th><th>חובה</th><th>הערה</th></tr>
+      <tr><td><code>TELEGRAM_BOT_TOKEN</code></td><td>כן</td><td>BotFather</td></tr>
+      <tr><td><code>ALLOWED_USER_IDS</code></td><td>כן</td><td>שני השותפים, מופרד בפסיק</td></tr>
+      <tr><td><code>OPENAI_API_KEY</code></td><td>כן</td><td>API + billing</td></tr>
+      <tr><td><code>OPENAI_MODEL</code></td><td>לא</td><td>ברירת מחדל gpt-4o</td></tr>
+      <tr><td><code>DATABASE_PATH</code></td><td>כן ב-Railway</td><td><code>/data/home.db</code></td></tr>
+      <tr><td><code>PUBLIC_URL</code></td><td>כן ב-Railway</td><td>HTTPS, בלי slash בסוף</td></tr>
+      <tr><td><code>OPENAI_BASE_URL</code></td><td>לא</td><td>רק לפרוקסי תואם</td></tr>
+    </table>
+  </section>
+
+  <section class="card" id="verify">
+    <h2>7. בדיקה</h2>
+    <ol>
+      <li>שניכם: <code>/start</code></li>
+      <li>שותף א: «תזכור שהוויפי זה TestPass»</li>
+      <li>שותף ב: «מה הסיסמה לוויפי?» → אמור לענות מהזיכרון המשותף</li>
+      <li>«תוסיף לקניות חלב» → <code>/shop</code></li>
+      <li><code>/memory</code> <code>/todos</code> <code>/inventory</code></li>
+    </ol>
+  </section>
+
+  <section class="card" id="tools">
+    <h2>8. פקודות וכלים</h2>
+    <h3>פקודות סלאש</h3>
+    <ul>
+      <li><code>/whoami</code> — מזהה טלגרם</li>
+      <li><code>/memory</code> <code>/todos</code> <code>/shop</code> <code>/notes</code> <code>/events</code> <code>/inventory</code> <code>/people</code></li>
+    </ul>
+    <h3>Tools של המודל</h3>
+    <ul>
+      <li>Memory: remember / recall / forget / search_home</li>
+      <li>Todos & shopping</li>
+      <li>Notes & events</li>
+      <li>Inventory & people</li>
+      <li>Settings (timezone וכו׳)</li>
+    </ul>
+  </section>
+
+  <section class="card" id="local">
+    <h2>9. הרצה מקומית</h2>
+    <pre class="ltr">cd shared-home-bot
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env   # מלא ערכים; PUBLIC_URL ריק
+python -m app.main</pre>
+    <p><code>PUBLIC_URL</code> ריק = long polling (נוח לפיתוח).</p>
+  </section>
+
+  <section class="card" id="trouble">
+    <h2>10. תקלות נפוצות</h2>
+    <table>
+      <tr><th>תסמין</th><th>פתרון</th></tr>
+      <tr><td>הבוט מתעלם</td><td>וודא ש-<code>ALLOWED_USER_IDS</code> כולל את ה-id שלך</td></tr>
+      <tr><td>אין תשובות / 401</td><td>API key + billing; נסה <code>gpt-4o-mini</code></td></tr>
+      <tr><td>הזיכרון מתאפס</td><td>חסר Volume על <code>/data</code></td></tr>
+      <tr><td>Webhook לא עובד</td><td><code>PUBLIC_URL</code> חייב להתאים לדומיין הציבורי</td></tr>
+      <tr><td>Build נכשל</td><td>בדוק Dockerfile + לוגים ב-Railway</td></tr>
+    </table>
+    <div class="note">
+      Health: <code>GET /health</code> · Info: <code>GET /</code> · Webhook: <code>POST /telegram/webhook</code>
+    </div>
+  </section>
+
+  <footer>
+    Shared Home Bot · Telegram + Railway + OpenAI · זיכרון משותף לבית
+  </footer>
+</div>
+</body>
+</html>
