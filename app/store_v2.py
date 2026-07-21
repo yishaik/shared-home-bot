@@ -7,6 +7,7 @@ from typing import Any
 
 from app.db import Store as LegacyStore
 from app.memory import MemoryIndex
+from app.reflect import Reflector
 
 
 EXTENSION_SCHEMA = """
@@ -49,6 +50,7 @@ class Store(LegacyStore):
         super().__init__(path)
         self.household_id = household_id
         self.memory: MemoryIndex | None = None
+        self.reflector: Reflector | None = None
 
     async def attach_memory(self, settings) -> None:
         """Wire the hybrid retrieval engine (embeddings + FTS5) and backfill it."""
@@ -62,6 +64,7 @@ class Store(LegacyStore):
         mi = MemoryIndex(self.db, client, settings.embedding_model)
         await mi.ensure_schema()      # only expose the engine once its tables exist
         self.memory = mi
+        self.reflector = Reflector(self, client, settings.summary_model)
         await self.reindex_all()
 
     async def reindex_all(self) -> None:

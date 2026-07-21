@@ -123,6 +123,27 @@ class HomeAgent:
         except Exception:
             log.exception("maybe_fold_summary failed — continuing")
 
+    async def _reflect_if_due(self, every: int = 20) -> None:
+        """Every `every` replies, run reflection in the background (serialised)."""
+        try:
+            reflector = getattr(self.store, "reflector", None)
+            if not reflector:
+                return
+            count = 0
+            try:
+                count = int(await self.store.get_setting("_msgs_since_reflect", "0") or 0)
+            except ValueError:
+                count = 0
+            count += 1
+            if count < every:
+                await self.store.set_setting("_msgs_since_reflect", str(count))
+                return
+            await self.store.set_setting("_msgs_since_reflect", "0")
+            async with self._household_lock:   # never overlap a live reply
+                await reflector.reflect()
+        except Exception:
+            log.exception("reflect_if_due failed — continuing")
+
     async def _reply_locked(self, *, user_text: str, user_id: int, username: str | None, display_name: str | None) -> str:
         speaker = display_name or username or str(user_id)
         await self.store.add_message(role="user", content=user_text, user_id=user_id, username=username, display_name=display_name)
@@ -159,6 +180,7 @@ class HomeAgent:
 
                 text = (message.content or "").strip() or "הפעולה הושלמה."
                 await self.store.add_message(role="assistant", content=text, user_id=user_id, username=username, display_name=display_name)
+                asyncio.create_task(self._reflect_if_due())  # background self-maintenance
                 return text
 
         fallback = "לא הצלחתי להשלים את הפעולה בבטחה. נסה לנסח אותה בקצרה יותר."

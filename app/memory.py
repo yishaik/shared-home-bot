@@ -163,6 +163,32 @@ class MemoryIndex:
         scored.sort(key=lambda x: x[1], reverse=True)
         return [k for k, _ in scored[:POOL]]
 
+    async def all_items(self, kind: str) -> list[dict[str, Any]]:
+        """All indexed items of a kind with decoded vectors (for consolidation)."""
+        rows = await (await self.db.execute(
+            "SELECT ref, text, vec FROM mem_index WHERE kind=? AND vec IS NOT NULL", (kind,))).fetchall()
+        return [{"ref": r["ref"], "text": r["text"], "vec": unpack_vec(r["vec"])} for r in rows]
+
+    def duplicate_groups(self, items: list[dict[str, Any]], threshold: float = 0.88) -> list[list[str]]:
+        """Union near-duplicate items (cosine >= threshold) into groups of refs."""
+        n = len(items)
+        parent = list(range(n))
+
+        def find(i: int) -> int:
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+
+        for i in range(n):
+            for j in range(i + 1, n):
+                if cosine(items[i]["vec"], items[j]["vec"]) >= threshold:
+                    parent[find(i)] = find(j)
+        groups: dict[int, list[str]] = {}
+        for i in range(n):
+            groups.setdefault(find(i), []).append(items[i]["ref"])
+        return [g for g in groups.values() if len(g) > 1]
+
     async def hybrid_search(self, query: str, k: int = 8, kinds: list[str] | None = None) -> list[dict[str, Any]]:
         query = (query or "").strip()
         if not query:
