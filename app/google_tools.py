@@ -38,6 +38,14 @@ GOOGLE_TOOL_SPECS: list[dict[str, Any]] = [
           {"doc_id": {"type": "string"}}, ["doc_id"]),
     _tool("gdoc_list", "List Google Docs the bot manages (most recently modified first).",
           {"max_results": {"type": "integer", "default": 20}}),
+    _tool("gsheet_create", "Create a Google Sheet, optionally with a header row (e.g. for an expense tracker). Returns its URL.",
+          {"title": {"type": "string"}, "headers": {"type": "array", "items": {"type": "string"}}}, ["title"]),
+    _tool("gsheet_append_row", "Append a row of values to a Google Sheet (get the id from gsheet_list).",
+          {"sheet_id": {"type": "string"}, "values": {"type": "array", "items": {"type": "string"}}}, ["sheet_id", "values"]),
+    _tool("gsheet_read", "Read cells from a Google Sheet. range is A1 notation (default A1:Z100).",
+          {"sheet_id": {"type": "string"}, "range": {"type": "string"}}, ["sheet_id"]),
+    _tool("gsheet_list", "List Google Sheets the bot manages (most recently modified first).",
+          {"max_results": {"type": "integer", "default": 20}}),
 ]
 
 GOOGLE_TOOL_NAMES = {t["function"]["name"] for t in GOOGLE_TOOL_SPECS}
@@ -71,6 +79,18 @@ async def run_google_tool(settings, name: str, arguments: dict[str, Any]) -> str
         if name == "gdoc_list":
             res = await asyncio.to_thread(gc.doc_list, settings, max_results=int(arguments.get("max_results") or 20))
             return json.dumps({"ok": True, "docs": res}, ensure_ascii=False)
+        if name == "gsheet_create":
+            res = await asyncio.to_thread(gc.sheet_create, settings, title=arguments["title"], headers=arguments.get("headers"))
+            return json.dumps({"ok": True, "sheet": res}, ensure_ascii=False)
+        if name == "gsheet_append_row":
+            res = await asyncio.to_thread(gc.sheet_append_row, settings, sheet_id=arguments["sheet_id"], values=arguments["values"])
+            return json.dumps({"ok": True, "sheet": res}, ensure_ascii=False)
+        if name == "gsheet_read":
+            res = await asyncio.to_thread(gc.sheet_read, settings, sheet_id=arguments["sheet_id"], range_a1=arguments.get("range") or "A1:Z100")
+            return json.dumps({"ok": True, "sheet": res}, ensure_ascii=False)
+        if name == "gsheet_list":
+            res = await asyncio.to_thread(gc.sheet_list, settings, max_results=int(arguments.get("max_results") or 20))
+            return json.dumps({"ok": True, "sheets": res}, ensure_ascii=False)
         return json.dumps({"ok": False, "error": f"unknown google tool {name}"}, ensure_ascii=False)
     except Exception as exc:  # noqa: BLE001 — surface a clean message to the model
         return json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False)

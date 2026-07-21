@@ -17,8 +17,9 @@ log = logging.getLogger("homebot.agent")
 
 def system_prompt(settings: Settings, snapshot: str, speaker: str) -> str:
     google_line = (
-        "\n- Google is connected: use gcal_* tools for the shared Google Calendar and gdoc_* tools for Google Docs. "
-        "The local event tools store household events; when the user wants something on their real Google Calendar, use gcal_add_event."
+        "\n- Google is connected: gcal_* for the shared Google Calendar, gdoc_* for Google Docs, gsheet_* for Google Sheets "
+        "(e.g. an expense tracker or list). The local event tools store household events; when the user wants something on their "
+        "real Google Calendar, use gcal_add_event."
         if settings.google_enabled else ""
     )
     return f"""You are {settings.bot_display_name}, the premium shared-home assistant for \"{settings.home_name}\".

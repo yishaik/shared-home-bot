@@ -176,3 +176,52 @@ def doc_list(settings, *, max_results: int = 20) -> list[dict[str, Any]]:
     ).execute()
     return [{"id": f["id"], "title": f.get("name", ""), "modified": f.get("modifiedTime"),
              "url": f.get("webViewLink") or _doc_url(f["id"])} for f in res.get("files", [])]
+
+
+# ── Sheets ────────────────────────────────────────────────────────────────
+# drive.file scope covers the Sheets API for spreadsheets this app creates —
+# no extra scope / re-consent needed. Requires the Sheets API to be enabled.
+def _sheet_url(sheet_id: str) -> str:
+    return f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit"
+
+
+def sheet_create(settings, *, title: str, headers: list | None = None) -> dict[str, Any]:
+    sheets = _service(settings, "sheets", "v4")
+    ss = sheets.spreadsheets().create(
+        body={"properties": {"title": title}}, fields="spreadsheetId,spreadsheetUrl").execute()
+    sid = ss["spreadsheetId"]
+    if headers:
+        sheets.spreadsheets().values().update(
+            spreadsheetId=sid, range="A1", valueInputOption="USER_ENTERED",
+            body={"values": [[str(h) for h in headers]]}).execute()
+    if settings.google_docs_folder_id:
+        drive = _service(settings, "drive", "v3")
+        drive.files().update(fileId=sid, addParents=settings.google_docs_folder_id, fields="id, parents").execute()
+    return {"id": sid, "title": title, "url": ss.get("spreadsheetUrl") or _sheet_url(sid)}
+
+
+def sheet_append_row(settings, *, sheet_id: str, values: list) -> dict[str, Any]:
+    sheets = _service(settings, "sheets", "v4")
+    sheets.spreadsheets().values().append(
+        spreadsheetId=sheet_id, range="A1", valueInputOption="USER_ENTERED",
+        insertDataOption="INSERT_ROWS", body={"values": [[str(v) for v in values]]}).execute()
+    return {"id": sheet_id, "appended": values, "url": _sheet_url(sheet_id)}
+
+
+def sheet_read(settings, *, sheet_id: str, range_a1: str = "A1:Z100") -> dict[str, Any]:
+    sheets = _service(settings, "sheets", "v4")
+    res = sheets.spreadsheets().values().get(spreadsheetId=sheet_id, range=range_a1).execute()
+    return {"id": sheet_id, "range": res.get("range"), "values": res.get("values", []), "url": _sheet_url(sheet_id)}
+
+
+def sheet_list(settings, *, max_results: int = 20) -> list[dict[str, Any]]:
+    drive = _service(settings, "drive", "v3")
+    q = "mimeType='application/vnd.google-apps.spreadsheet' and trashed=false"
+    if settings.google_docs_folder_id:
+        q += f" and '{settings.google_docs_folder_id}' in parents"
+    res = drive.files().list(
+        q=q, orderBy="modifiedTime desc", pageSize=max(1, min(int(max_results or 20), 50)),
+        fields="files(id, name, modifiedTime, webViewLink)",
+    ).execute()
+    return [{"id": f["id"], "title": f.get("name", ""), "modified": f.get("modifiedTime"),
+             "url": f.get("webViewLink") or _sheet_url(f["id"])} for f in res.get("files", [])]
