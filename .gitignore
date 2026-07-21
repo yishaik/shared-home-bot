@@ -6,3 +6,6 @@ data/*.db
 data/*.db-*
 .pytest_cache/
 .DS_Store
+miniapp/node_modules/
+miniapp/dist/
+miniapp/*.tsbuildinfo
