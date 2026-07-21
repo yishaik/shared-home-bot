@@ -12,7 +12,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r requirements-dev.txt
-      - run: pytest -q
+      - run: python -m pytest -q
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
