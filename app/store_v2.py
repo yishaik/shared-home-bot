@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from app.db import Store as LegacyStore
+from app.memory import MemoryIndex
 
 
 EXTENSION_SCHEMA = """
@@ -47,6 +48,34 @@ class Store(LegacyStore):
     def __init__(self, path: Path, household_id: str = "primary"):
         super().__init__(path)
         self.household_id = household_id
+        self.memory: MemoryIndex | None = None
+
+    async def attach_memory(self, settings) -> None:
+        """Wire the hybrid retrieval engine (embeddings + FTS5) and backfill it."""
+        client = None
+        if settings.openai_api_key:
+            from openai import AsyncOpenAI
+            kwargs: dict[str, Any] = {"api_key": settings.openai_api_key}
+            if settings.openai_base_url:
+                kwargs["base_url"] = settings.openai_base_url
+            client = AsyncOpenAI(**kwargs)
+        mi = MemoryIndex(self.db, client, settings.embedding_model)
+        await mi.ensure_schema()      # only expose the engine once its tables exist
+        self.memory = mi
+        await self.reindex_all()
+
+    async def reindex_all(self) -> None:
+        if not self.memory:
+            return
+        items: list[tuple[str, str, str]] = []
+        for m in await super().list_memories():
+            items.append(("memory", m["key"], f"{m['key']}: {m['value']}"))
+        for n in await super().list_notes():
+            items.append(("note", n["title"].strip().lower(), f"{n['title']}\n{n['body']}"))
+        for p in await self.people_list():
+            items.append(("person", p["name"].strip().lower(),
+                          f"{p['name']} {p.get('relation','')} {p.get('notes','')} {p.get('prefs','')}"))
+        await self.memory.backfill(items)
 
     async def connect(self) -> None:
         await super().connect()
@@ -83,6 +112,28 @@ class Store(LegacyStore):
                 (self.household_id, user_id, now),
             )
         await self.db.commit()
+
+    # ── keep the hybrid index in sync on every durable write ──────────────
+    async def set_memory(self, key: str, value: str, category: str = "general", user_id: int | None = None) -> None:
+        await super().set_memory(key, value, category, user_id)
+        if self.memory:
+            await self.memory.index("memory", key.strip().lower(), f"{key.strip()}: {value.strip()}")
+
+    async def delete_memory(self, key: str) -> bool:
+        ok = await super().delete_memory(key)
+        if self.memory:
+            await self.memory.unindex("memory", key.strip().lower())
+        return ok
+
+    async def upsert_note(self, title: str, body: str, tags: str = "", user_id: int | None = None) -> None:
+        await super().upsert_note(title, body, tags, user_id)
+        if self.memory:
+            await self.memory.index("note", title.strip().lower(), f"{title.strip()}\n{body}")
+
+    async def person_set(self, name: str, relation: str = "", notes: str = "", prefs: str = "", user_id: int | None = None) -> None:
+        await super().person_set(name, relation, notes, prefs, user_id)
+        if self.memory:
+            await self.memory.index("person", name.strip().lower(), f"{name} {relation} {notes} {prefs}".strip())
 
     async def is_member(self, user_id: int, household_id: str | None = None) -> bool:
         row = await (await self.db.execute(
@@ -261,15 +312,30 @@ class Store(LegacyStore):
         }
 
     async def snapshot_for_prompt(self, query: str | None = None) -> str:
-        mems, todos, shopping = await self.list_memories(limit=20), await self.list_todos(False), await self.shop_list(False)
+        todos, shopping = await self.list_todos(False), await self.shop_list(False)
         events, people = await self.list_events(), await self.people_list()
         lines = ["## Shared household context"]
-        if query:
-            matches = {key: value for key, value in (await self.search_all(query, limit=5)).items() if value}
+
+        # Relevance-ranked retrieval — hybrid (embeddings + FTS5, RRF-fused),
+        # covers facts AND notes/people by meaning, not just substring. Never let
+        # a retrieval hiccup break a reply — fall back to the lexical search.
+        hits = None
+        if query and self.memory:
+            try:
+                hits = await self.memory.hybrid_search(query, k=8)
+            except Exception:
+                hits = None
+        if hits:
+            lines.append("### Most relevant to this request")
+            lines.extend(f"- [{h['kind']}] {h['text'][:280]}" for h in hits)
+        elif query:  # fallback when the engine is unavailable/empty
+            matches = {k: v for k, v in (await self.search_all(query, limit=5)).items() if v}
             if matches:
-                lines.extend(["### Relevant search results", json.dumps(matches, ensure_ascii=False)[:3500]])
-        lines.append("### Facts")
-        lines.extend(f"- [{m['category']}] {m['key']}: {m['value']}" for m in mems[:12])
+                lines.extend(["### Relevant search results", json.dumps(matches, ensure_ascii=False)[:3000]])
+
+        mems = await self.list_memories(limit=10)
+        lines.append("### Household facts")
+        lines.extend(f"- [{m['category']}] {m['key']}: {m['value']}" for m in mems[:10])
         lines.append("### Open todos")
         lines.extend(f"- #{item['id']} {item['title']}" for item in todos[:12])
         lines.append("### Shopping")

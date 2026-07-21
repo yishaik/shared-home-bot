@@ -33,6 +33,10 @@ def create_app() -> FastAPI:
         settings.require_runtime()
         await store.connect()
         await store.bootstrap_household(settings.home_name, settings.household_timezone, settings.allowed_user_ids)
+        try:
+            await store.attach_memory(settings)  # hybrid retrieval engine + backfill
+        except Exception:
+            log.exception("memory engine attach failed — continuing with lexical fallback")
         agent = HomeAgent(settings, store, service)
         tg_app = build_application(settings, store, service, agent)
         state.update(tg_app=tg_app, agent=agent)

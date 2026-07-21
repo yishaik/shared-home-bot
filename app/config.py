@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-4o", alias="OPENAI_MODEL")
     openai_base_url: str | None = Field(default=None, alias="OPENAI_BASE_URL")
+    embedding_model: str = Field(default="text-embedding-3-small", alias="EMBEDDING_MODEL")
 
     home_name: str = Field(default="הבית שלנו", alias="HOME_NAME")
     bot_display_name: str = Field(default="Home", alias="BOT_DISPLAY_NAME")
