@@ -10,12 +10,17 @@ from openai import AsyncOpenAI
 from app.config import Settings
 from app.store_v2 import Store
 from app.services import HomeService
-from app.tools import TOOL_SPECS, run_tool
+from app.tools import tool_specs, run_tool
 
 log = logging.getLogger("homebot.agent")
 
 
 def system_prompt(settings: Settings, snapshot: str, speaker: str) -> str:
+    google_line = (
+        "\n- Google is connected: use gcal_* tools for the shared Google Calendar and gdoc_* tools for Google Docs. "
+        "The local event tools store household events; when the user wants something on their real Google Calendar, use gcal_add_event."
+        if settings.google_enabled else ""
+    )
     return f"""You are {settings.bot_display_name}, the premium shared-home assistant for \"{settings.home_name}\".
 
 The household has one shared operational brain. Facts, tasks, shopping, notes, events, inventory and people are shared.
@@ -23,7 +28,7 @@ Current speaker: {speaker}
 
 Rules:
 - Match the user's language. Default to warm, concise Hebrew.
-- Use tools for household state and never pretend a mutation succeeded without a successful tool result.
+- Use tools for household state and never pretend a mutation succeeded without a successful tool result.{google_line}
 - Save durable logistics, decisions and preferences when useful, but do not save casual conversation.
 - Shopping requests use shop tools; chores use todo tools; dates use event tools; long reference content uses notes.
 - For destructive or ambiguous actions, explain what you need instead of guessing.
@@ -74,7 +79,7 @@ class HomeAgent:
                 response = await self.client.chat.completions.create(
                     model=self.settings.openai_model,
                     messages=messages,
-                    tools=TOOL_SPECS,
+                    tools=tool_specs(self.settings),
                     tool_choice="auto",
                     temperature=0.25,
                 )
@@ -90,7 +95,7 @@ class HomeAgent:
                             args = json.loads(call.function.arguments or "{}")
                         except json.JSONDecodeError:
                             args = {}
-                        result = await run_tool(self.store, self.service, call.function.name, args, user_id)
+                        result = await run_tool(self.store, self.service, call.function.name, args, user_id, settings=self.settings)
                         await self.store.add_message(role="tool", content=result, user_id=user_id, username=username, display_name=display_name, tool_name=call.function.name, tool_call_id=call.id)
                         messages.append({"role": "tool", "tool_call_id": call.id, "content": result})
                     snapshot = await self.store.snapshot_for_prompt(user_text)

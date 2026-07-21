@@ -5,6 +5,7 @@ from typing import Any
 
 from app.store_v2 import Store
 from app.services import HomeService
+from app.google_tools import GOOGLE_TOOL_SPECS, GOOGLE_TOOL_NAMES, run_google_tool
 
 
 def _tool(name: str, description: str, properties: dict, required: list[str] | None = None) -> dict:
@@ -40,8 +41,19 @@ TOOL_SPECS: list[dict[str, Any]] = [
 ]
 
 
-async def run_tool(store: Store, service: HomeService, name: str, arguments: dict[str, Any], user_id: int | None) -> str:
+def tool_specs(settings=None) -> list[dict[str, Any]]:
+    """The tool list offered to the model — Google tools appear only when configured."""
+    if settings is not None and getattr(settings, "google_enabled", False):
+        return [*TOOL_SPECS, *GOOGLE_TOOL_SPECS]
+    return TOOL_SPECS
+
+
+async def run_tool(store: Store, service: HomeService, name: str, arguments: dict[str, Any], user_id: int | None, settings=None) -> str:
     actor = int(user_id or 0)
+    if name in GOOGLE_TOOL_NAMES:
+        if settings is None or not getattr(settings, "google_enabled", False):
+            return json.dumps({"ok": False, "error": "Google integration is not configured"}, ensure_ascii=False)
+        return await run_google_tool(settings, name, arguments)
     try:
         if name == "remember":
             await store.set_memory(arguments["key"], arguments["value"], arguments.get("category") or "general", user_id)

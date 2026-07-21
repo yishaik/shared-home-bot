@@ -138,6 +138,66 @@ def create_app() -> FastAPI:
             return FileResponse(requested)
         return FileResponse(index)
 
+    # ── one-time Google OAuth bootstrap ──────────────────────────────────
+    # Active only while GOOGLE_OAUTH_SETUP_SECRET is set. Flow: open /start
+    # (logged in as the bot Google account) → approve → callback stores the
+    # refresh token in the DB → /token lets the operator fetch it once. Unset
+    # the secret afterwards to disable all three routes.
+    def _setup_ok(secret: str) -> bool:
+        return bool(settings.google_oauth_setup_secret) and secret == settings.google_oauth_setup_secret
+
+    @api.get("/google/oauth/start")
+    async def google_oauth_start(secret: str = ""):
+        if not _setup_ok(secret):
+            return Response(status_code=404)
+        if not settings.google_client_id or not settings.resolved_public_url:
+            return JSONResponse({"detail": "GOOGLE_CLIENT_ID / public URL not set"}, status_code=400)
+        from urllib.parse import urlencode
+        from app.google_client import SCOPES
+        from fastapi.responses import RedirectResponse
+        params = {
+            "client_id": settings.google_client_id,
+            "redirect_uri": f"{settings.resolved_public_url}/google/oauth/callback",
+            "response_type": "code",
+            "scope": " ".join(SCOPES),
+            "access_type": "offline",
+            "prompt": "consent",
+            "include_granted_scopes": "true",
+            "state": settings.google_oauth_setup_secret,
+        }
+        return RedirectResponse("https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(params))
+
+    @api.get("/google/oauth/callback")
+    async def google_oauth_callback(code: str = "", state: str = "", error: str = ""):
+        if not _setup_ok(state):
+            return Response(status_code=404)
+        if error or not code:
+            return JSONResponse({"detail": f"oauth error: {error or 'missing code'}"}, status_code=400)
+        import httpx
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post("https://oauth2.googleapis.com/token", data={
+                "code": code,
+                "client_id": settings.google_client_id,
+                "client_secret": settings.google_client_secret,
+                "redirect_uri": f"{settings.resolved_public_url}/google/oauth/callback",
+                "grant_type": "authorization_code",
+            })
+        data = resp.json()
+        refresh = data.get("refresh_token")
+        if not refresh:
+            return JSONResponse({"detail": "no refresh_token (re-consent with prompt=consent)", "response": data}, status_code=400)
+        await store.set_setting("google_refresh_token", refresh)
+        log.info("google oauth: refresh token stored (len=%s)", len(refresh))
+        return Response(content="<html><body style='font-family:system-ui;padding:2rem'>"
+                        "<h2>✅ Google מחובר</h2><p>אפשר לסגור את הדף. Alfred ישלים מכאן.</p></body></html>",
+                        media_type="text/html")
+
+    @api.get("/google/oauth/token")
+    async def google_oauth_token(secret: str = ""):
+        if not _setup_ok(secret):
+            return Response(status_code=404)
+        return {"refresh_token": await store.get_setting("google_refresh_token")}
+
     return api
 
 

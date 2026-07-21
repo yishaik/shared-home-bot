@@ -35,6 +35,14 @@ class Settings(BaseSettings):
     app_session_secret: str = Field(default="", alias="APP_SESSION_SECRET")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
+    # Google (dedicated bot account, OAuth refresh-token flow — see scripts/google_oauth.py)
+    google_client_id: str = Field(default="", alias="GOOGLE_CLIENT_ID")
+    google_client_secret: str = Field(default="", alias="GOOGLE_CLIENT_SECRET")
+    google_refresh_token: str = Field(default="", alias="GOOGLE_REFRESH_TOKEN")
+    google_calendar_id: str = Field(default="primary", alias="GOOGLE_CALENDAR_ID")
+    google_docs_folder_id: str = Field(default="", alias="GOOGLE_DOCS_FOLDER_ID")
+    google_oauth_setup_secret: str = Field(default="", alias="GOOGLE_OAUTH_SETUP_SECRET")
+
     @field_validator("allowed_user_ids", mode="before")
     @classmethod
     def parse_ids(cls, value):
@@ -74,6 +82,10 @@ class Settings(BaseSettings):
     @property
     def effective_session_secret(self) -> str:
         return self.app_session_secret or self.telegram_bot_token
+
+    @property
+    def google_enabled(self) -> bool:
+        return bool(self.google_client_id and self.google_client_secret and self.google_refresh_token)
 
     def require_runtime(self) -> None:
         missing: list[str] = []
