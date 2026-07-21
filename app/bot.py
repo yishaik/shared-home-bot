@@ -1,233 +1,216 @@
-"""Telegram handlers — every allowed user shares the same agent memory."""
-
 from __future__ import annotations
 
+import html
 import logging
+import uuid
 
-from telegram import Update
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    ContextTypes,
-    MessageHandler,
-    filters,
-)
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, WebAppInfo
+from telegram.constants import ChatAction, ParseMode
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from app.agent import HomeAgent
 from app.config import Settings
-from app.db import Store
+from app.store_v2 import Store
+from app.services import HomeService
 
 log = logging.getLogger("homebot.bot")
 
 
 def _is_allowed(settings: Settings, user_id: int) -> bool:
-    if not settings.allowed_user_ids:
-        # empty allowlist = open (not recommended); require at least one in prod
+    return bool(settings.allowed_user_ids) and user_id in settings.allowed_user_ids
+
+
+def _app_keyboard(settings: Settings) -> InlineKeyboardMarkup | None:
+    if not settings.resolved_mini_app_url:
+        return None
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🏠 פתיחת הבית", web_app=WebAppInfo(url=settings.resolved_mini_app_url))]])
+
+
+async def _authorized(update: Update, settings: Settings) -> bool:
+    user = update.effective_user
+    if user and _is_allowed(settings, user.id):
         return True
-    return user_id in settings.allowed_user_ids
+    message = update.effective_message
+    if message:
+        await message.reply_text("הבוט הזה פרטי ואינו מוגדר עבור החשבון הזה.")
+    return False
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     settings: Settings = context.application.bot_data["settings"]
+    store: Store = context.application.bot_data["store"]
     user = update.effective_user
-    if not user or not _is_allowed(settings, user.id):
-        await update.effective_message.reply_text("Sorry — this bot is private.")
+    if not user or not await _authorized(update, settings):
         return
-    await update.effective_message.reply_text(
-        f"Hey {user.first_name or 'there'} 👋\n"
-        f"I'm *{settings.bot_display_name}* — shared home assistant for *{settings.home_name}*.\n\n"
-        "Both of you talk to me here. Memory, todos, notes, and events are shared.\n\n"
-        "Try:\n"
-        "• «תזכור שהאינטרנט זה X»\n"
-        "• «הוסף לקניות חלב»\n"
-        "• /memory /todos /help\n",
-        parse_mode="Markdown",
+    await store.upsert_member_profile(user.id, user.full_name, user.username or "")
+    text = (
+        f"<b>ברוך הבא ל־{settings.home_name}</b> 🏠\n\n"
+        "כאן מנהלים יחד קניות, משימות, אירועים, מידע חשוב וכל מה שצריך כדי שהבית יעבוד בשקט.\n\n"
+        "אפשר פשוט לכתוב לי:\n"
+        "• הוסף חלב לרשימת הקניות\n"
+        "• תזכיר לנו להזמין אינסטלטור ביום חמישי\n"
+        "• מה צריך לעשות השבוע?\n\n"
+        "לסקירה ועריכה נוחה, פתח את אפליקציית הבית."
     )
+    await update.effective_message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=_app_keyboard(settings))
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    settings: Settings = context.application.bot_data["settings"]
+    if not await _authorized(update, settings):
+        return
     await update.effective_message.reply_text(
-        "Commands:\n"
-        "/start — intro\n"
-        "/help — this\n"
-        "/whoami — your Telegram user id (for ALLOWED_USER_IDS)\n"
-        "/memory — shared facts\n"
-        "/todos — open todos\n"
-        "/shop — shopping list\n"
-        "/notes — notes\n"
-        "/events — events\n"
-        "/inventory — what's at home\n"
-        "/people — household people\n\n"
-        "Otherwise just chat — I use tools so both of you share the same brain."
+        "אפשר לדבר איתי בשפה חופשית או להשתמש בקיצורים:\n"
+        "/todos — משימות פתוחות\n"
+        "/shop — רשימת קניות\n"
+        "/events — אירועים\n"
+        "/memory — מידע שמור\n"
+        "/app — פתיחת אפליקציית הבית",
+        reply_markup=_app_keyboard(settings),
     )
+
+
+async def cmd_app(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    settings: Settings = context.application.bot_data["settings"]
+    if not await _authorized(update, settings):
+        return
+    keyboard = _app_keyboard(settings)
+    if keyboard:
+        await update.effective_message.reply_text("כל הבית, במקום אחד:", reply_markup=keyboard)
+    else:
+        await update.effective_message.reply_text("כתובת ה־Mini App עדיין לא הוגדרה.")
 
 
 async def cmd_whoami(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
-    if not user:
-        return
-    await update.effective_message.reply_text(
-        f"id: `{user.id}`\nusername: @{user.username or '—'}\nname: {user.full_name}",
-        parse_mode="Markdown",
-    )
+    if user:
+        await update.effective_message.reply_text(f"Telegram ID: <code>{user.id}</code>", parse_mode=ParseMode.HTML)
 
 
 async def cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     settings: Settings = context.application.bot_data["settings"]
     store: Store = context.application.bot_data["store"]
-    user = update.effective_user
-    if not user or not _is_allowed(settings, user.id):
+    if not await _authorized(update, settings):
         return
-    rows = await store.list_memories()
+    rows = await store.list_memories(limit=20)
     if not rows:
-        await update.effective_message.reply_text("Shared memory is empty.")
+        await update.effective_message.reply_text("עדיין אין מידע שמור בבית.")
         return
-    lines = [f"• [{r['category']}] *{r['key']}*: {r['value']}" for r in rows]
-    text = "🧠 Shared memory\n" + "\n".join(lines)
-    await update.effective_message.reply_text(text[:4000], parse_mode="Markdown")
+    lines = [f"• <b>{html.escape(str(row['key']))}</b>: {html.escape(str(row['value']))}" for row in rows]
+    await update.effective_message.reply_text("🧠 <b>מידע משותף</b>\n" + "\n".join(lines), parse_mode=ParseMode.HTML, reply_markup=_app_keyboard(settings))
 
 
 async def cmd_todos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     settings: Settings = context.application.bot_data["settings"]
     store: Store = context.application.bot_data["store"]
-    user = update.effective_user
-    if not user or not _is_allowed(settings, user.id):
+    if not await _authorized(update, settings):
         return
-    rows = await store.list_todos(include_done=False)
+    rows = await store.list_todos(False)
     if not rows:
-        await update.effective_message.reply_text("No open todos.")
+        await update.effective_message.reply_text("אין משימות פתוחות ✓", reply_markup=_app_keyboard(settings))
         return
-    lines = [f"#{r['id']} — {r['title']}" for r in rows]
-    await update.effective_message.reply_text("✅ Open todos\n" + "\n".join(lines))
-
-
-async def cmd_notes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    settings: Settings = context.application.bot_data["settings"]
-    store: Store = context.application.bot_data["store"]
-    user = update.effective_user
-    if not user or not _is_allowed(settings, user.id):
-        return
-    rows = await store.list_notes()
-    if not rows:
-        await update.effective_message.reply_text("No notes yet.")
-        return
-    lines = [f"• {r['title']}" + (f" [{r['tags']}]" if r["tags"] else "") for r in rows]
-    await update.effective_message.reply_text("📝 Notes\n" + "\n".join(lines))
-
-
-async def cmd_events(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    settings: Settings = context.application.bot_data["settings"]
-    store: Store = context.application.bot_data["store"]
-    user = update.effective_user
-    if not user or not _is_allowed(settings, user.id):
-        return
-    rows = await store.list_events()
-    if not rows:
-        await update.effective_message.reply_text("No events yet.")
-        return
-    lines = [f"• {r['title']} @ {r['when_text']}" for r in rows]
-    await update.effective_message.reply_text("📅 Events\n" + "\n".join(lines))
+    keyboard = [[InlineKeyboardButton(f"✓ {row['title'][:32]}", callback_data=f"todo_done:{row['id']}")] for row in rows[:8]]
+    if settings.resolved_mini_app_url:
+        keyboard.append([InlineKeyboardButton("כל המשימות", web_app=WebAppInfo(url=f"{settings.resolved_mini_app_url}?tab=tasks"))])
+    await update.effective_message.reply_text("✅ <b>משימות פתוחות</b>\nלחץ לסימון כהושלם:", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def cmd_shop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     settings: Settings = context.application.bot_data["settings"]
     store: Store = context.application.bot_data["store"]
-    user = update.effective_user
-    if not user or not _is_allowed(settings, user.id):
+    if not await _authorized(update, settings):
         return
-    rows = await store.shop_list(include_done=False)
+    rows = await store.shop_list(False)
     if not rows:
-        await update.effective_message.reply_text("🛒 Shopping list is empty.")
+        await update.effective_message.reply_text("רשימת הקניות ריקה 🛒", reply_markup=_app_keyboard(settings))
         return
-    lines = [f"#{r['id']} {r['item']} × {r['qty']}" for r in rows]
-    await update.effective_message.reply_text("🛒 Shopping\n" + "\n".join(lines))
+    keyboard = [[InlineKeyboardButton(f"✓ {row['item'][:32]} × {row['qty']}", callback_data=f"shop_done:{row['id']}")] for row in rows[:8]]
+    if settings.resolved_mini_app_url:
+        keyboard.append([InlineKeyboardButton("למצב קניות", web_app=WebAppInfo(url=f"{settings.resolved_mini_app_url}?tab=shopping"))])
+    await update.effective_message.reply_text("🛒 <b>רשימת קניות</b>\nלחץ לאחר שהפריט נרכש:", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
 
 
-async def cmd_inventory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def cmd_events(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     settings: Settings = context.application.bot_data["settings"]
     store: Store = context.application.bot_data["store"]
-    user = update.effective_user
-    if not user or not _is_allowed(settings, user.id):
+    if not await _authorized(update, settings):
         return
-    rows = await store.inventory_list()
+    rows = await store.list_events()
     if not rows:
-        await update.effective_message.reply_text("Inventory is empty.")
+        await update.effective_message.reply_text("אין אירועים שמורים.", reply_markup=_app_keyboard(settings))
         return
-    lines = [f"• {r['item']}: {r['qty']} @ {r['location']}" for r in rows]
-    await update.effective_message.reply_text("📦 Inventory\n" + "\n".join(lines[:80]))
+    lines = [f"• <b>{html.escape(str(row['title']))}</b> — {html.escape(str(row.get('start_at') or row.get('when_text') or ''))}" for row in rows[:12]]
+    await update.effective_message.reply_text("📅 <b>אירועים</b>\n" + "\n".join(lines), parse_mode=ParseMode.HTML, reply_markup=_app_keyboard(settings))
 
 
-async def cmd_people(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     settings: Settings = context.application.bot_data["settings"]
-    store: Store = context.application.bot_data["store"]
+    service: HomeService = context.application.bot_data["service"]
+    query = update.callback_query
     user = update.effective_user
-    if not user or not _is_allowed(settings, user.id):
+    if not query or not user or not _is_allowed(settings, user.id):
         return
-    rows = await store.people_list()
-    if not rows:
-        await update.effective_message.reply_text("No people saved yet.")
+    await query.answer()
+    action, _, raw_id = (query.data or "").partition(":")
+    try:
+        entity_id = int(raw_id)
+    except ValueError:
         return
-    lines = []
-    for r in rows:
-        bit = f"• {r['name']}"
-        if r["relation"]:
-            bit += f" ({r['relation']})"
-        if r["prefs"]:
-            bit += f" — {r['prefs']}"
-        lines.append(bit)
-    await update.effective_message.reply_text("👥 People\n" + "\n".join(lines))
+    if action == "todo_done":
+        item = await service.update_todo(user.id, entity_id, done=True)
+        if item:
+            await query.edit_message_text(f"✓ הושלמה: {item['title']}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("ביטול", callback_data=f"todo_undo:{entity_id}")]]))
+    elif action == "todo_undo":
+        item = await service.update_todo(user.id, entity_id, done=False)
+        if item:
+            await query.edit_message_text(f"↩ המשימה הוחזרה: {item['title']}")
+    elif action == "shop_done":
+        item = await service.update_shopping(user.id, entity_id, done=True)
+        if item:
+            await query.edit_message_text(f"✓ נרכש: {item['item']}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("ביטול", callback_data=f"shop_undo:{entity_id}")]]))
+    elif action == "shop_undo":
+        item = await service.update_shopping(user.id, entity_id, done=False)
+        if item:
+            await query.edit_message_text(f"↩ הוחזר לרשימה: {item['item']}")
 
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     settings: Settings = context.application.bot_data["settings"]
     agent: HomeAgent = context.application.bot_data["agent"]
     user = update.effective_user
-    msg = update.effective_message
-    if not user or not msg or not msg.text:
-        return
-    if not _is_allowed(settings, user.id):
-        await msg.reply_text("Sorry — this bot is private.")
+    message = update.effective_message
+    if not user or not message or not message.text or not await _authorized(update, settings):
         return
 
-    await context.bot.send_chat_action(chat_id=msg.chat_id, action="typing")
+    await context.bot.send_chat_action(chat_id=message.chat_id, action=ChatAction.TYPING)
+    progress = await message.reply_text("מטפל בזה…")
     try:
-        answer = await agent.reply(
-            user_text=msg.text,
-            user_id=user.id,
-            username=user.username,
-            display_name=user.full_name,
-        )
-    except Exception as e:
-        log.exception("agent failed")
-        await msg.reply_text(f"Something went wrong: {e}")
+        answer = await agent.reply(user_text=message.text, user_id=user.id, username=user.username, display_name=user.full_name)
+    except Exception:
+        incident = uuid.uuid4().hex[:8]
+        log.exception("agent failed incident=%s", incident)
+        await progress.edit_text(f"לא הצלחתי להשלים את הפעולה. אפשר לנסות שוב.\nקוד תקלה: <code>{incident}</code>", parse_mode=ParseMode.HTML)
         return
 
-    # Telegram 4096 limit
-    for i in range(0, len(answer), 4000):
-        await msg.reply_text(answer[i : i + 4000])
+    if len(answer) <= 4000:
+        await progress.edit_text(answer)
+        return
+    await progress.delete()
+    for offset in range(0, len(answer), 4000):
+        await message.reply_text(answer[offset : offset + 4000])
 
 
-def build_application(settings: Settings, store: Store, agent: HomeAgent) -> Application:
-    app = (
-        Application.builder()
-        .token(settings.telegram_bot_token)
-        .concurrent_updates(True)
-        .build()
-    )
-    app.bot_data["settings"] = settings
-    app.bot_data["store"] = store
-    app.bot_data["agent"] = agent
-
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("help", cmd_help))
-    app.add_handler(CommandHandler("whoami", cmd_whoami))
-    app.add_handler(CommandHandler("memory", cmd_memory))
-    app.add_handler(CommandHandler("todos", cmd_todos))
-    app.add_handler(CommandHandler("notes", cmd_notes))
-    app.add_handler(CommandHandler("events", cmd_events))
-    app.add_handler(CommandHandler("shop", cmd_shop))
-    app.add_handler(CommandHandler("shopping", cmd_shop))
-    app.add_handler(CommandHandler("inventory", cmd_inventory))
-    app.add_handler(CommandHandler("people", cmd_people))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
-    return app
+def build_application(settings: Settings, store: Store, service: HomeService, agent: HomeAgent) -> Application:
+    application = Application.builder().token(settings.telegram_bot_token).concurrent_updates(True).build()
+    application.bot_data.update(settings=settings, store=store, service=service, agent=agent)
+    application.add_handler(CommandHandler("start", cmd_start))
+    application.add_handler(CommandHandler("help", cmd_help))
+    application.add_handler(CommandHandler("app", cmd_app))
+    application.add_handler(CommandHandler("whoami", cmd_whoami))
+    application.add_handler(CommandHandler("memory", cmd_memory))
+    application.add_handler(CommandHandler("todos", cmd_todos))
+    application.add_handler(CommandHandler(["shop", "shopping"], cmd_shop))
+    application.add_handler(CommandHandler("events", cmd_events))
+    application.add_handler(CallbackQueryHandler(on_callback))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
+    return application
