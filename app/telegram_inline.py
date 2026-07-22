@@ -5,7 +5,6 @@ import hashlib
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any
 
 from telegram import InlineQueryResultArticle, InputTextMessageContent, Update
 from telegram.constants import ParseMode
@@ -149,6 +148,8 @@ class InlineShareService:
         return [help_card()]
 
     async def cards(self, actor_id: int, raw_query: str) -> list[ShareCard]:
+        if not self.actor_may_use(actor_id):
+            return []
         intent = parse_inline_intent(raw_query)
         if intent.kind and not self.policy.may_share(
             actor_id=actor_id, kind=intent.kind, surface="inline"
