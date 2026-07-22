@@ -8,6 +8,7 @@ from telegram import Bot, Chat, Message, Update
 from app.agent_profiles import AgentRouter, DEFAULT_AGENT_PROFILES
 from app.config import Settings
 from app.services import HomeService
+from app.smart_inbox_service import SmartInboxService
 from app.store_v2 import Store
 from app.telegram_agent import TelegramAgentRuntime
 from app.telegram_api import TelegramRawApi
@@ -24,13 +25,17 @@ class TelegramPlatform:
         self.store = store
         self.service = service
         self.telegram_store = TelegramStore(store)
+        self.inbox = SmartInboxService(settings, store, service)
         self.router = AgentRouter(self.telegram_store)
-        self.agent = TelegramAgentRuntime(settings, store, service, self.telegram_store)
+        self.agent = TelegramAgentRuntime(
+            settings, store, service, self.telegram_store, self.inbox
+        )
         self.raw_api = TelegramRawApi(settings)
         self.bot_username = ""
 
     async def initialize(self, bot: Bot) -> None:
         await self.telegram_store.ensure_schema()
+        await self.inbox.ensure_schema()
         await self.telegram_store.prune_updates()
         me = await bot.get_me()
         self.bot_username = me.username or ""
@@ -104,7 +109,12 @@ class TelegramPlatform:
                 cleaned,
                 flags=re.IGNORECASE,
             )
-        cleaned = re.sub(r"(?:^|\s)(?:@agent:|agent:)[a-z0-9_-]+", " ", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(
+            r"(?:^|\s)(?:@agent:|agent:)[a-z0-9_-]+",
+            " ",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
         return " ".join(cleaned.split()).strip()
 
     async def answer(self, update: Update) -> tuple[str, str] | None:
@@ -120,7 +130,9 @@ class TelegramPlatform:
         text = self.clean_user_text(envelope.text)
         if not text:
             return None
-        answer = await self.agent.reply(envelope=envelope, profile=profile, user_text=text)
+        answer = await self.agent.reply(
+            envelope=envelope, profile=profile, user_text=text
+        )
         return answer, profile.id
 
     async def create_topic(
@@ -154,7 +166,9 @@ class TelegramPlatform:
         if agent_id:
             if agent_id not in DEFAULT_AGENT_PROFILES:
                 raise ValueError(f"Unknown agent: {agent_id}")
-            await self.telegram_store.bind_topic(chat.id, topic.message_thread_id, agent_id)
+            await self.telegram_store.bind_topic(
+                chat.id, topic.message_thread_id, agent_id
+            )
         return topic
 
     async def sync_topic_service_message(self, message: Message) -> None:
@@ -176,9 +190,13 @@ class TelegramPlatform:
                 message.forum_topic_edited.name,
             )
         elif message.forum_topic_closed:
-            await self.telegram_store.set_topic_status(message.chat_id, message.message_thread_id, "closed")
+            await self.telegram_store.set_topic_status(
+                message.chat_id, message.message_thread_id, "closed"
+            )
         elif message.forum_topic_reopened:
-            await self.telegram_store.set_topic_status(message.chat_id, message.message_thread_id, "open")
+            await self.telegram_store.set_topic_status(
+                message.chat_id, message.message_thread_id, "open"
+            )
 
     async def set_chat_active(self, chat: Chat, active: bool) -> None:
         await self.telegram_store.upsert_chat(

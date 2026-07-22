@@ -15,4 +15,66 @@ export type Activity = { id: number; actor_id?: number | null; actor_name?: stri
 export type MemoryItem = { key: string; value: string; category: string; updated_by?: number | null; updated_at: number }
 export type MemoryAudit = { id: number; action: string; memory_key: string; old_value: string; new_value: string; source: string; actor_id?: number | null; metadata: Record<string, unknown>; created_at: number }
 export type MemoryControl = { status: { auto_memory_enabled: boolean; last_status: string; last_at: string; last_error: string }; core_memory: string; memories: MemoryItem[]; audit: MemoryAudit[] }
+
+export type InboxStatus = 'pending' | 'executing' | 'completed' | 'failed' | 'needs_review' | 'editing' | 'cancelled' | 'expired'
+export type InboxRisk = 'low' | 'medium' | 'high'
+export type InboxStep = {
+  proposal_id: string
+  position: number
+  tool_name: string
+  arguments: Record<string, unknown>
+  fingerprint: string
+  risk_level: InboxRisk
+  requires_approval: boolean
+  external_side_effect: boolean
+  status: 'pending' | 'executing' | 'completed' | 'failed' | 'uncertain'
+  result?: Record<string, unknown> | null
+  last_error: string
+  started_at?: number | null
+  completed_at?: number | null
+}
+export type InboxAudit = {
+  id: number
+  proposal_id: string
+  actor_id?: number | null
+  action: string
+  from_status: string
+  to_status: string
+  metadata: Record<string, unknown>
+  created_at: number
+}
+export type InboxProposal = {
+  id: string
+  household_id: string
+  source_kind: string
+  source_key: string
+  chat_id?: number | null
+  thread_id?: number | null
+  source_message_id?: number | null
+  source_update_id?: number | null
+  created_by: number
+  agent_id: string
+  source_text: string
+  summary: string
+  risk_level: InboxRisk
+  approval_policy: string
+  status: InboxStatus
+  version: number
+  retry_count: number
+  last_error: string
+  created_at: number
+  updated_at: number
+  expires_at: number
+  executing_at?: number | null
+  completed_at?: number | null
+  cancelled_at?: number | null
+  steps: InboxStep[]
+  audit?: InboxAudit[]
+  can_approve: boolean
+  can_cancel: boolean
+  can_retry: boolean
+  requires_approval?: boolean
+}
+export type InboxCounts = Record<InboxStatus, number> & { attention: number }
+
 export type Dashboard = { household: Household; members: Member[]; counts: { todos: number; shopping: number; events: number; projects: number }; todos: Todo[]; shopping: ShoppingItem[]; events: HomeEvent[]; projects: Project[]; activity: Activity[]; calendar_status?: CalendarStatus }

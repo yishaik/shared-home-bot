@@ -24,9 +24,17 @@ async def _touch(update, context, *, started: bool = False) -> None:
     message = update.effective_message
     if not user:
         return
-    chat_id = message.chat_id if message and getattr(message.chat, "type", "") == "private" else None
+    chat_id = (
+        message.chat_id
+        if message and getattr(message.chat, "type", "") == "private"
+        else None
+    )
     await MemberService(context.application.bot_data["store"]).touch(
-        user.id, user.full_name, user.username or "", private_chat_id=chat_id, started=started,
+        user.id,
+        user.full_name,
+        user.username or "",
+        private_chat_id=chat_id,
+        started=started,
     )
 
 
@@ -61,7 +69,8 @@ async def cmd_whoami(update, context):
     if user and update.effective_message:
         username = f" · @{html.escape(user.username)}" if user.username else ""
         await update.effective_message.reply_text(
-            f"אתה מזוהה כ־<b>{html.escape(user.full_name)}</b>{username}", parse_mode=ParseMode.HTML,
+            f"אתה מזוהה כ־<b>{html.escape(user.full_name)}</b>{username}",
+            parse_mode=ParseMode.HTML,
         )
 
 
@@ -73,17 +82,37 @@ async def cmd_todos(update, context):
     store = context.application.bot_data["store"]
     rows = await WorkService(settings, store).list_tasks()
     if not rows:
-        await update.effective_message.reply_text("אין משימות פתוחות ✓", reply_markup=bot_module._app_keyboard(settings))
+        await update.effective_message.reply_text(
+            "אין משימות פתוחות ✓",
+            reply_markup=bot_module._app_keyboard(settings),
+        )
         return
     keyboard = []
     for row in rows[:8]:
         prefix = "🔒" if row.get("blocked") else "✓"
-        keyboard.append([InlineKeyboardButton(f"{prefix} {row['title'][:30]}", callback_data=f"todo_done:{row['id']}")])
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    f"{prefix} {row['title'][:30]}",
+                    callback_data=f"todo_done:{row['id']}",
+                )
+            ]
+        )
     if settings.resolved_mini_app_url:
-        keyboard.append([InlineKeyboardButton("כל העבודה", web_app=WebAppInfo(url=f"{settings.resolved_mini_app_url}?tab=tasks"))])
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    "כל העבודה",
+                    web_app=WebAppInfo(
+                        url=f"{settings.resolved_mini_app_url}?tab=tasks"
+                    ),
+                )
+            ]
+        )
     await update.effective_message.reply_text(
         "✅ <b>משימות פתוחות</b>\nלחץ לסימון כהושלם:",
-        parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
 
@@ -101,22 +130,31 @@ async def cmd_events(update, context):
             bot_module.log.exception("calendar sync failed in /events")
     rows = await calendar.list_events()
     if not rows:
-        await update.effective_message.reply_text("אין אירועים קרובים ביומן המשותף.", reply_markup=bot_module._app_keyboard(settings))
+        await update.effective_message.reply_text(
+            "אין אירועים קרובים ביומן המשותף.",
+            reply_markup=bot_module._app_keyboard(settings),
+        )
         return
     lines = []
     for row in rows[:12]:
-        start, end = html.escape(str(row.get("start_at") or "")), html.escape(str(row.get("end_at") or ""))
-        lines.append(f"• <b>{html.escape(str(row['title']))}</b> — {start}{f' → {end}' if end else ''}")
+        start = html.escape(str(row.get("start_at") or ""))
+        end = html.escape(str(row.get("end_at") or ""))
+        lines.append(
+            f"• <b>{html.escape(str(row['title']))}</b> — "
+            f"{start}{f' → {end}' if end else ''}"
+        )
     await update.effective_message.reply_text(
         "📅 <b>אירועים מ־Google Calendar</b>\n" + "\n".join(lines),
-        parse_mode=ParseMode.HTML, reply_markup=bot_module._app_keyboard(settings),
+        parse_mode=ParseMode.HTML,
+        reply_markup=bot_module._app_keyboard(settings),
     )
 
 
 async def on_callback(update, context):
     platform = bot_module._platform(context)
     envelope = platform.envelope(update)
-    query, user = update.callback_query, update.effective_user
+    query = update.callback_query
+    user = update.effective_user
     if not query or not user or not envelope or not platform.is_authorized(envelope):
         return
     await _touch(update, context)
@@ -125,7 +163,13 @@ async def on_callback(update, context):
         return
 
     action, _, raw_id = (query.data or "").partition(":")
-    if action not in {"todo_done", "todo_start", "todo_undo", "shop_done", "shop_undo"}:
+    if action not in {
+        "todo_done",
+        "todo_start",
+        "todo_undo",
+        "shop_done",
+        "shop_undo",
+    }:
         await _original_callback(update, context)
         return
 
@@ -134,13 +178,26 @@ async def on_callback(update, context):
         entity_id = int(raw_id)
     except ValueError:
         return
-    settings, store = context.application.bot_data["settings"], context.application.bot_data["store"]
+    settings = context.application.bot_data["settings"]
+    store = context.application.bot_data["store"]
     work = WorkService(settings, store)
     service = context.application.bot_data["service"]
     if action == "todo_done":
         item = await work.update_task(user.id, entity_id, status="completed")
         if item:
-            await query.edit_message_text(f"✓ הושלמה: {item['title']}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("ביטול", callback_data=f"todo_undo:{entity_id}")]]))
+            await query.edit_message_text(
+                f"✓ הושלמה: {item['title']}",
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                "ביטול",
+                                callback_data=f"todo_undo:{entity_id}",
+                            )
+                        ]
+                    ]
+                ),
+            )
     elif action == "todo_start":
         item = await work.update_task(user.id, entity_id, status="in_progress")
         if item:
@@ -152,7 +209,19 @@ async def on_callback(update, context):
     elif action == "shop_done":
         item = await service.update_shopping(user.id, entity_id, done=True)
         if item:
-            await query.edit_message_text(f"✓ נרכש: {item['item']}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("ביטול", callback_data=f"shop_undo:{entity_id}")]]))
+            await query.edit_message_text(
+                f"✓ נרכש: {item['item']}",
+                reply_markup=InlineKeyboardMarkup(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                "ביטול",
+                                callback_data=f"shop_undo:{entity_id}",
+                            )
+                        ]
+                    ]
+                ),
+            )
     elif action == "shop_undo":
         item = await service.update_shopping(user.id, entity_id, done=False)
         if item:
@@ -165,7 +234,6 @@ async def on_text(update, context):
 
 
 def apply() -> None:
-    smart_inbox.apply_runtime_patches()
     bot_module.cmd_start = cmd_start
     bot_module.cmd_help = cmd_help
     bot_module.cmd_app = cmd_app
