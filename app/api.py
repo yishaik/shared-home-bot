@@ -183,7 +183,7 @@ def build_api_router(settings: Settings, store: Store, service: HomeService) -> 
     @router.put("/memory/core")
     async def update_core_memory(body: CoreMemoryUpdate, actor: Actor = Depends(current_actor)) -> dict[str, str]:
         old = await store.get_core_memory()
-        await store.set_setting("core_memory", body.value.strip())
+        await store.set_core_memory(body.value.strip())
         await record_memory_audit(
             store,
             action="core_replaced",
@@ -192,7 +192,7 @@ def build_api_router(settings: Settings, store: Store, service: HomeService) -> 
             source="manual",
             actor_id=actor.user_id,
         )
-        return {"core_memory": body.value.strip()}
+        return {"core_memory": await store.get_core_memory()}
 
     @router.get("/notes")
     async def notes(_: Actor = Depends(current_actor)) -> list[dict[str, Any]]:
