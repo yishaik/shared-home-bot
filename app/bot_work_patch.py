@@ -6,6 +6,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.constants import ParseMode
 
 from app import bot as bot_module
+from app import smart_inbox
 from app.calendar_service import CalendarService
 from app.member_service import MemberService
 from app.work_service import WorkService
@@ -15,7 +16,7 @@ _original_help = bot_module.cmd_help
 _original_app = bot_module.cmd_app
 _original_memory = bot_module.cmd_memory
 _original_shop = bot_module.cmd_shop
-_original_text = bot_module.on_text
+_original_callback = bot_module.on_callback
 
 
 async def _touch(update, context, *, started: bool = False) -> None:
@@ -119,8 +120,16 @@ async def on_callback(update, context):
     if not query or not user or not envelope or not platform.is_authorized(envelope):
         return
     await _touch(update, context)
-    await query.answer()
+
+    if await smart_inbox.handle_callback(update, context):
+        return
+
     action, _, raw_id = (query.data or "").partition(":")
+    if action not in {"todo_done", "todo_start", "todo_undo", "shop_done", "shop_undo"}:
+        await _original_callback(update, context)
+        return
+
+    await query.answer()
     try:
         entity_id = int(raw_id)
     except ValueError:
@@ -152,10 +161,11 @@ async def on_callback(update, context):
 
 async def on_text(update, context):
     await _touch(update, context, started=True)
-    await _original_text(update, context)
+    await smart_inbox.on_text(update, context)
 
 
 def apply() -> None:
+    smart_inbox.apply_runtime_patches()
     bot_module.cmd_start = cmd_start
     bot_module.cmd_help = cmd_help
     bot_module.cmd_app = cmd_app
