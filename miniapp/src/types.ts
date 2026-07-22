@@ -4,6 +4,14 @@ export type Todo = { id: number; title: string; done: number; assigned_to?: numb
 export type ShoppingItem = { id: number; item: string; qty: string; category: string; done: number }
 export type HomeEvent = { id: number; title: string; when_text: string; start_at?: string | null; end_at?: string | null; location: string; all_day: number; notes: string }
 export type Activity = { id: number; actor_id?: number | null; actor_name?: string; kind: string; entity_type: string; summary: string; created_at: number }
+export type MemoryItem = { key: string; value: string; category: string; updated_by?: number | null; updated_at: number }
+export type MemoryAudit = { id: number; action: string; memory_key: string; old_value: string; new_value: string; source: string; actor_id?: number | null; metadata: Record<string, unknown>; created_at: number }
+export type MemoryControl = {
+  status: { auto_memory_enabled: boolean; last_status: string; last_at: string; last_error: string }
+  core_memory: string
+  memories: MemoryItem[]
+  audit: MemoryAudit[]
+}
 export type Dashboard = {
   household: Household
   members: Member[]
