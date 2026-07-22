@@ -3,11 +3,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any
+from typing import Any, Coroutine
 
 from openai import AsyncOpenAI
 
 from app.config import Settings
+from app.memory_control import (
+    auto_memory_enabled,
+    mark_reflection_failed,
+    mark_reflection_finished,
+    mark_reflection_started,
+)
 from app.store_v2 import Store
 from app.services import HomeService
 from app.tools import tool_specs, run_tool
@@ -33,11 +39,12 @@ Rules:
 - Match the user's language. Default to warm, concise Hebrew.
 - Use tools for household state and never pretend a mutation succeeded without a successful tool result.{google_line}
 - Save durable logistics, decisions and preferences when useful, but do not save casual conversation.
+- Never save passwords, authentication secrets, payment-card data, government identifiers, exact medical records or intimate/private content unless the user explicitly asks to remember it.
 - Shopping requests use shop tools; chores use todo tools; dates use event tools; long reference content uses notes.
 - For destructive or ambiguous actions, explain what you need instead of guessing.
 - After a successful action, confirm it in one short line and mention the most useful next action only when relevant.
 - Never expose secrets, raw tool output or internal errors.
-- Keep Core memory curated: when you learn a lasting essential (a household member/name, a recurring routine, a major ongoing situation), use core_memory_append; use core_memory_replace to fix or prune it. Keep it short — details belong in facts/notes.
+- Keep Core memory curated: when you learn a lasting essential, use core_memory_append; use core_memory_replace to fix or prune it. Keep it short — details belong in facts/notes.
 {core_block}{summary_block}
 {snapshot}
 """
@@ -53,6 +60,36 @@ class HomeAgent:
             kwargs["base_url"] = settings.openai_base_url
         self.client = AsyncOpenAI(**kwargs)
         self._household_lock = asyncio.Lock()
+        self._reflection_lock = asyncio.Lock()
+        self._background_tasks: set[asyncio.Task[Any]] = set()
+        self._closing = False
+
+    def _spawn_background(self, coro: Coroutine[Any, Any, Any], *, name: str) -> None:
+        if self._closing:
+            coro.close()
+            return
+        task = asyncio.create_task(coro, name=name)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    async def shutdown(self, timeout_seconds: float = 12.0) -> None:
+        """Finish or cancel owned background work before the database closes."""
+        self._closing = True
+        tasks = list(self._background_tasks)
+        if not tasks:
+            return
+        done, pending = await asyncio.wait(tasks, timeout=timeout_seconds)
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        for task in done:
+            try:
+                task.result()
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                log.exception("background task failed during shutdown")
 
     def _history_to_openai(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = []
@@ -79,15 +116,15 @@ class HomeAgent:
 
     def _render_for_summary(self, rows: list[dict[str, Any]]) -> str:
         out: list[str] = []
-        for r in rows:
-            who = r.get("display_name") or r.get("telegram_username") or r.get("telegram_user_id")
-            content = (r["content"] or "")[:600]
-            if r["role"] == "user":
+        for row in rows:
+            who = row.get("display_name") or row.get("telegram_username") or row.get("telegram_user_id")
+            content = (row["content"] or "")[:600]
+            if row["role"] == "user":
                 out.append(f"{who}: {content}")
-            elif r["role"] == "assistant":
+            elif row["role"] == "assistant":
                 out.append(f"assistant: {content}")
-            elif r["role"] == "tool":
-                out.append(f"(tool {r.get('tool_name') or 'tool'}) {content[:200]}")
+            elif row["role"] == "tool":
+                out.append(f"(tool {row.get('tool_name') or 'tool'}) {content[:200]}")
         return "\n".join(out)[:8000]
 
     async def _summarize(self, prev: str, block: str) -> str:
@@ -99,22 +136,23 @@ class HomeAgent:
             f"CURRENT SUMMARY:\n{prev or '(none yet)'}\n\nNEW MESSAGES:\n{block}\n\nReturn only the updated summary."
         )
         try:
-            resp = await self.client.chat.completions.create(
+            response = await self.client.chat.completions.create(
                 model=self.settings.summary_model,
-                messages=[{"role": "user", "content": prompt}], temperature=0.2)
-            return (resp.choices[0].message.content or "").strip()[:2400]
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2,
+            )
+            return (response.choices[0].message.content or "").strip()[:2400]
         except Exception:
             log.exception("summary fold failed")
             return ""
 
     async def _maybe_fold_summary(self) -> None:
-        """Fold messages older than the verbatim window into the rolling summary."""
         try:
             keep = max(4, self.settings.verbatim_messages)
             last_id = await self.store.get_conv_summary_last_id()
-            pending = await self.store.messages_after(last_id)  # oldest first
+            pending = await self.store.messages_after(last_id)
             foldable = pending[:-keep] if len(pending) > keep else []
-            if len(foldable) < 8:  # amortise — summarise only once a batch builds up
+            if len(foldable) < 8:
                 return
             new_summary = await self._summarize(await self.store.get_conv_summary(), self._render_for_summary(foldable))
             if new_summary:
@@ -124,25 +162,36 @@ class HomeAgent:
             log.exception("maybe_fold_summary failed — continuing")
 
     async def _reflect_if_due(self, every: int = 20) -> None:
-        """Every `every` replies, run reflection in the background (serialised)."""
+        """Run one serialized reflection and reset the counter only after success."""
+        if self._closing or not await auto_memory_enabled(self.store):
+            return
         try:
+            count = int(await self.store.get_setting("_msgs_since_reflect", "0") or 0) + 1
+        except ValueError:
+            count = 1
+        if count < every:
+            await self.store.set_setting("_msgs_since_reflect", str(count))
+            return
+
+        async with self._reflection_lock:
+            if self._closing or not await auto_memory_enabled(self.store):
+                return
             reflector = getattr(self.store, "reflector", None)
             if not reflector:
                 return
-            count = 0
+            await mark_reflection_started(self.store)
             try:
-                count = int(await self.store.get_setting("_msgs_since_reflect", "0") or 0)
-            except ValueError:
-                count = 0
-            count += 1
-            if count < every:
-                await self.store.set_setting("_msgs_since_reflect", str(count))
-                return
-            await self.store.set_setting("_msgs_since_reflect", "0")
-            async with self._household_lock:   # never overlap a live reply
-                await reflector.reflect()
-        except Exception:
-            log.exception("reflect_if_due failed — continuing")
+                async with asyncio.timeout(90):
+                    result = await reflector.reflect()
+                await self.store.set_setting("_msgs_since_reflect", "0")
+                await mark_reflection_finished(self.store)
+                log.info("reflection completed: %s", result)
+            except asyncio.CancelledError:
+                await mark_reflection_failed(self.store, "cancelled during shutdown")
+                raise
+            except Exception as exc:
+                await mark_reflection_failed(self.store, str(exc))
+                log.exception("reflection failed — counter retained for retry")
 
     async def _reply_locked(self, *, user_text: str, user_id: int, username: str | None, display_name: str | None) -> str:
         speaker = display_name or username or str(user_id)
@@ -180,7 +229,7 @@ class HomeAgent:
 
                 text = (message.content or "").strip() or "הפעולה הושלמה."
                 await self.store.add_message(role="assistant", content=text, user_id=user_id, username=username, display_name=display_name)
-                asyncio.create_task(self._reflect_if_due())  # background self-maintenance
+                self._spawn_background(self._reflect_if_due(), name="memory-reflection")
                 return text
 
         fallback = "לא הצלחתי להשלים את הפעולה בבטחה. נסה לנסח אותה בקצרה יותר."

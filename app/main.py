@@ -15,6 +15,7 @@ from app.agent import HomeAgent
 from app.api import build_api_router
 from app.bot import build_application
 from app.config import get_settings
+from app.memory_control import ensure_memory_control_schema
 from app.store_v2 import Store
 from app.services import HomeService
 
@@ -32,9 +33,10 @@ def create_app() -> FastAPI:
     async def lifespan(app: FastAPI):
         settings.require_runtime()
         await store.connect()
+        await ensure_memory_control_schema(store)
         await store.bootstrap_household(settings.home_name, settings.household_timezone, settings.allowed_user_ids)
         try:
-            await store.attach_memory(settings)  # hybrid retrieval engine + backfill
+            await store.attach_memory(settings)
         except Exception:
             log.exception("memory engine attach failed — continuing with lexical fallback")
         agent = HomeAgent(settings, store, service)
@@ -76,10 +78,11 @@ def create_app() -> FastAPI:
         if tg_app.updater and tg_app.updater.running:
             await tg_app.updater.stop()
         await tg_app.stop()
+        await agent.shutdown()
         await tg_app.shutdown()
         await store.close()
 
-    api = FastAPI(title="Shared Home Bot", version="2.0.1", lifespan=lifespan)
+    api = FastAPI(title="Shared Home Bot", version="2.1.0", lifespan=lifespan)
     api.include_router(build_api_router(settings, store, service))
 
     @api.middleware("http")
@@ -142,11 +145,6 @@ def create_app() -> FastAPI:
             return FileResponse(requested)
         return FileResponse(index)
 
-    # ── one-time Google OAuth bootstrap ──────────────────────────────────
-    # Active only while GOOGLE_OAUTH_SETUP_SECRET is set. Flow: open /start
-    # (logged in as the bot Google account) → approve → callback stores the
-    # refresh token in the DB → /token lets the operator fetch it once. Unset
-    # the secret afterwards to disable all three routes.
     def _setup_ok(secret: str) -> bool:
         return bool(settings.google_oauth_setup_secret) and secret == settings.google_oauth_setup_secret
 

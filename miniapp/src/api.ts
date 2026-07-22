@@ -1,4 +1,4 @@
-import type { Activity, Dashboard, HomeEvent, Household, ShoppingItem, Todo } from './types'
+import type { Activity, Dashboard, HomeEvent, Household, MemoryControl, MemoryItem, ShoppingItem, Todo } from './types'
 
 let token = sessionStorage.getItem('home_session') || ''
 
@@ -42,6 +42,11 @@ export const api = {
   events: () => request<HomeEvent[]>('/api/events'),
   addEvent: (event: { title: string; start_at: string; end_at?: string; location?: string; notes?: string; all_day?: boolean }) => request<HomeEvent>('/api/events', { method: 'POST', body: JSON.stringify(event) }),
   deleteEvent: (id: number) => request<void>(`/api/events/${id}`, { method: 'DELETE' }),
+  memoryControl: () => request<MemoryControl>('/api/memory/control'),
+  updateMemorySettings: (enabled: boolean) => request<MemoryControl['status']>('/api/memory/settings', { method: 'PATCH', body: JSON.stringify({ auto_memory_enabled: enabled }) }),
+  updateMemory: (key: string, value: string, category: string) => request<MemoryItem>(`/api/memory/${encodeURIComponent(key)}`, { method: 'PATCH', body: JSON.stringify({ value, category }) }),
+  deleteMemory: (key: string) => request<void>(`/api/memory/${encodeURIComponent(key)}`, { method: 'DELETE' }),
+  updateCoreMemory: (value: string) => request<{ core_memory: string }>('/api/memory/core', { method: 'PUT', body: JSON.stringify({ value }) }),
   household: () => request<{ household: Household; members: Dashboard['members'] }>('/api/household'),
   updateHousehold: (patch: Partial<Household>) => request<Household>('/api/household', { method: 'PATCH', body: JSON.stringify(patch) }),
 }
