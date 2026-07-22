@@ -6,8 +6,25 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 
 from app.config import Settings
+from app.memory_control import (
+    list_memory_audit,
+    record_memory_audit,
+    reflection_status,
+    set_auto_memory_enabled,
+)
 from app.store_v2 import Store
-from app.schemas import EventCreate, HouseholdUpdate, ShoppingCreate, ShoppingUpdate, TelegramAuthRequest, TodoCreate, TodoUpdate
+from app.schemas import (
+    CoreMemoryUpdate,
+    EventCreate,
+    HouseholdUpdate,
+    MemorySettingsUpdate,
+    MemoryUpdate,
+    ShoppingCreate,
+    ShoppingUpdate,
+    TelegramAuthRequest,
+    TodoCreate,
+    TodoUpdate,
+)
 from app.security import AuthenticationError, SessionSigner, parse_telegram_user, validate_telegram_init_data
 from app.services import HomeService
 
@@ -115,6 +132,67 @@ def build_api_router(settings: Settings, store: Store, service: HomeService) -> 
     @router.get("/memory")
     async def memory(_: Actor = Depends(current_actor)) -> list[dict[str, Any]]:
         return await store.list_memories(limit=100)
+
+    @router.get("/memory/control")
+    async def memory_control(_: Actor = Depends(current_actor)) -> dict[str, Any]:
+        return {
+            "status": await reflection_status(store),
+            "core_memory": await store.get_core_memory(),
+            "memories": await store.list_memories(limit=200),
+            "audit": await list_memory_audit(store, limit=50),
+        }
+
+    @router.patch("/memory/settings")
+    async def update_memory_settings(body: MemorySettingsUpdate, actor: Actor = Depends(current_actor)) -> dict[str, Any]:
+        await set_auto_memory_enabled(store, body.auto_memory_enabled, actor.user_id)
+        await store.add_activity(actor.user_id, "updated", "memory", "settings", "הגדרות הזיכרון עודכנו")
+        return await reflection_status(store)
+
+    @router.patch("/memory/{memory_key}")
+    async def update_memory(memory_key: str, body: MemoryUpdate, actor: Actor = Depends(current_actor)) -> dict[str, Any]:
+        old = await store.get_memory(memory_key)
+        if not old:
+            raise HTTPException(status_code=404, detail="Memory not found")
+        await store.set_memory(memory_key, body.value, body.category, actor.user_id)
+        await record_memory_audit(
+            store,
+            action="updated",
+            memory_key=memory_key,
+            old_value=old.get("value", ""),
+            new_value=body.value,
+            source="manual",
+            actor_id=actor.user_id,
+        )
+        return await store.get_memory(memory_key) or {}
+
+    @router.delete("/memory/{memory_key}", status_code=status.HTTP_204_NO_CONTENT)
+    async def delete_memory(memory_key: str, actor: Actor = Depends(current_actor)) -> None:
+        old = await store.get_memory(memory_key)
+        if not old or not await store.delete_memory(memory_key):
+            raise HTTPException(status_code=404, detail="Memory not found")
+        await record_memory_audit(
+            store,
+            action="deleted",
+            memory_key=memory_key,
+            old_value=old.get("value", ""),
+            source="manual",
+            actor_id=actor.user_id,
+            metadata={"deleted_memory": old},
+        )
+
+    @router.put("/memory/core")
+    async def update_core_memory(body: CoreMemoryUpdate, actor: Actor = Depends(current_actor)) -> dict[str, str]:
+        old = await store.get_core_memory()
+        await store.set_setting("core_memory", body.value.strip())
+        await record_memory_audit(
+            store,
+            action="core_replaced",
+            old_value=old,
+            new_value=body.value.strip(),
+            source="manual",
+            actor_id=actor.user_id,
+        )
+        return {"core_memory": body.value.strip()}
 
     @router.get("/notes")
     async def notes(_: Actor = Depends(current_actor)) -> list[dict[str, Any]]:
