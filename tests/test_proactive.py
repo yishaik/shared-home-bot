@@ -47,6 +47,15 @@ class FakeBot:
         self.sent.append((chat_id, text))
 
 
+class FakeTelegramStore:
+    def __init__(self):
+        self.messages: list[dict] = []
+
+    async def add_message(self, *, scope_key, agent_id, role, content, **_kw) -> int:
+        self.messages.append({"scope_key": scope_key, "agent_id": agent_id, "role": role, "content": content})
+        return len(self.messages)
+
+
 async def make_store(tmp_path: Path) -> Store:
     store = Store(tmp_path / "home.db")
     await store.connect()
@@ -179,6 +188,26 @@ async def test_quiet_hours_defer_brief_but_fire_reminder(tmp_path: Path) -> None
 
     await engine.tick(dt.datetime(2026, 7, 23, 4, 31, tzinfo=dt.timezone.utc))  # 07:31 — quiet over
     assert any("בוקר טוב" in text for _, text in bot.sent)
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_proactive_send_records_into_recipient_scope_transcript(tmp_path: Path) -> None:
+    store = await make_store(tmp_path)
+    bot = FakeBot()
+    tgs = FakeTelegramStore()
+    engine = ProactiveEngine(settings(), store, None, bot, telegram_store=tgs)
+    await reminder_add(store, engine.settings, text="test", due_at="2026-07-23T09:00:00",
+                       created_by=1, target_user_id=1)
+    await engine.tick(dt.datetime(2026, 7, 23, 6, 1, tzinfo=dt.timezone.utc))
+    assert bot.sent == [(1, "⏰ תזכורת: test")]
+    # Recorded into the recipient's own private-chat coordinator transcript.
+    assert tgs.messages == [{
+        "scope_key": "telegram:1:0",
+        "agent_id": "coordinator",
+        "role": "assistant",
+        "content": "[הודעה יזומה] ⏰ תזכורת: test",
+    }]
     await store.close()
 
 
