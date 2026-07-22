@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from app.calendar_service import CalendarService
 from app.store_v2 import Store
 from app.services import HomeService
 from app.google_tools import GOOGLE_TOOL_SPECS, GOOGLE_TOOL_NAMES, run_google_tool
@@ -29,8 +30,20 @@ TOOL_SPECS: list[dict[str, Any]] = [
     _tool("shop_clear_done", "Remove completed shopping items.", {}),
     _tool("note_save", "Create or update a household note.", {"title": {"type": "string"}, "body": {"type": "string"}, "tags": {"type": "string"}}, ["title", "body"]),
     _tool("note_get", "Read a note by title or list notes.", {"title": {"type": "string"}}),
-    _tool("event_add", "Save a household event. Use ISO 8601 for start_at when possible.", {"title": {"type": "string"}, "when": {"type": "string"}, "start_at": {"type": "string"}, "end_at": {"type": "string"}, "location": {"type": "string"}, "notes": {"type": "string"}, "all_day": {"type": "boolean"}}, ["title", "when"]),
-    _tool("event_list", "List household events.", {}),
+    _tool("event_add", "Create an event in the shared Google Calendar. Use ISO 8601 in Asia/Jerusalem. For all-day events pass YYYY-MM-DD.", {
+        "title": {"type": "string"}, "start_at": {"type": "string"}, "end_at": {"type": "string"},
+        "location": {"type": "string"}, "description": {"type": "string"}, "all_day": {"type": "boolean"},
+        "attendees": {"type": "array", "items": {"type": "string"}},
+        "recurrence": {"type": "array", "items": {"type": "string"}},
+    }, ["title", "start_at"]),
+    _tool("event_list", "List events from the shared Google Calendar cache, synchronized from Google.", {}),
+    _tool("event_update", "Update a shared Google Calendar event by id.", {
+        "id": {"type": "string"}, "title": {"type": "string"}, "start_at": {"type": "string"},
+        "end_at": {"type": "string"}, "location": {"type": "string"}, "description": {"type": "string"},
+        "all_day": {"type": "boolean"}, "attendees": {"type": "array", "items": {"type": "string"}},
+        "recurrence": {"type": "array", "items": {"type": "string"}},
+    }, ["id"]),
+    _tool("event_delete", "Delete a shared Google Calendar event by id.", {"id": {"type": "string"}}, ["id"]),
     _tool("inventory_set", "Track an item at home.", {"item": {"type": "string"}, "qty": {"type": "string", "default": "1"}, "location": {"type": "string", "default": "home"}, "notes": {"type": "string"}}, ["item"]),
     _tool("inventory_get", "Get one inventory item or list inventory.", {"item": {"type": "string"}}),
     _tool("inventory_delete", "Remove an inventory item.", {"item": {"type": "string"}}, ["item"]),
@@ -38,13 +51,12 @@ TOOL_SPECS: list[dict[str, Any]] = [
     _tool("people_list", "List people in household memory.", {}),
     _tool("setting_set", "Set a household preference.", {"key": {"type": "string"}, "value": {"type": "string"}}, ["key", "value"]),
     _tool("setting_get", "Get one household preference or list all.", {"key": {"type": "string"}}),
-    _tool("core_memory_append", "Append a lasting essential to Core memory (a household member/name, a recurring routine, a major ongoing situation). Keep it short — details go in facts/notes.", {"text": {"type": "string"}}, ["text"]),
-    _tool("core_memory_replace", "Fix or prune Core memory by replacing an exact substring (use an empty replacement to delete it).", {"find": {"type": "string"}, "replace": {"type": "string", "default": ""}}, ["find"]),
+    _tool("core_memory_append", "Append a lasting essential to Core memory. Keep it short.", {"text": {"type": "string"}}, ["text"]),
+    _tool("core_memory_replace", "Fix or prune Core memory by replacing an exact substring.", {"find": {"type": "string"}, "replace": {"type": "string", "default": ""}}, ["find"]),
 ]
 
 
 def tool_specs(settings=None) -> list[dict[str, Any]]:
-    """The tool list offered to the model — Google tools appear only when configured."""
     if settings is not None and getattr(settings, "google_enabled", False):
         return [*TOOL_SPECS, *GOOGLE_TOOL_SPECS]
     return TOOL_SPECS
@@ -99,11 +111,29 @@ async def run_tool(store: Store, service: HomeService, name: str, arguments: dic
                 return json.dumps({"ok": True, "note": await store.get_note(arguments["title"])}, ensure_ascii=False)
             rows = await store.list_notes()
             return json.dumps({"ok": True, "notes": [{"id": n["id"], "title": n["title"], "tags": n["tags"]} for n in rows]}, ensure_ascii=False)
-        if name == "event_add":
-            item = await service.add_event(actor, title=arguments["title"], start_at=arguments.get("start_at") or arguments["when"], end_at=arguments.get("end_at"), location=arguments.get("location") or "", notes=arguments.get("notes") or "", all_day=bool(arguments.get("all_day")), when_text=arguments["when"])
-            return json.dumps({"ok": True, "event": item}, ensure_ascii=False)
-        if name == "event_list":
-            return json.dumps({"ok": True, "events": await store.list_events()}, ensure_ascii=False)
+        if name.startswith("event_"):
+            if settings is None or not getattr(settings, "google_enabled", False):
+                return json.dumps({"ok": False, "error": "Google Calendar is not configured"}, ensure_ascii=False)
+            calendar = CalendarService(settings, store)
+            if name == "event_add":
+                item = await calendar.create_event(
+                    actor,
+                    title=arguments["title"], start_at=arguments["start_at"], end_at=arguments.get("end_at"),
+                    location=arguments.get("location") or "", description=arguments.get("description") or "",
+                    all_day=bool(arguments.get("all_day")), attendees=arguments.get("attendees") or [],
+                    recurrence=arguments.get("recurrence") or [],
+                )
+                return json.dumps({"ok": True, "event": item}, ensure_ascii=False)
+            if name == "event_list":
+                await calendar.incremental_sync()
+                return json.dumps({"ok": True, "events": await calendar.list_events()}, ensure_ascii=False)
+            if name == "event_update":
+                changes = {k: v for k, v in arguments.items() if k != "id"}
+                item = await calendar.update_event(actor, arguments["id"], **changes)
+                return json.dumps({"ok": True, "event": item}, ensure_ascii=False)
+            if name == "event_delete":
+                await calendar.delete_event(actor, arguments["id"])
+                return json.dumps({"ok": True, "deleted": arguments["id"]}, ensure_ascii=False)
         if name == "inventory_set":
             await store.inventory_set(arguments["item"], arguments.get("qty") or "1", arguments.get("location") or "home", arguments.get("notes") or "", user_id)
             await store.add_activity(user_id, "updated", "inventory", arguments["item"], f"עודכן מלאי: {arguments['item']}")

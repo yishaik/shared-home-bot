@@ -5,6 +5,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 
+from app.calendar_service import CalendarService
 from app.config import Settings
 from app.memory_control import (
     list_memory_audit,
@@ -16,6 +17,7 @@ from app.store_v2 import Store
 from app.schemas import (
     CoreMemoryUpdate,
     EventCreate,
+    EventUpdate,
     HouseholdUpdate,
     MemorySettingsUpdate,
     MemoryUpdate,
@@ -39,6 +41,7 @@ class Actor:
 def build_api_router(settings: Settings, store: Store, service: HomeService) -> APIRouter:
     router = APIRouter(prefix="/api")
     signer = SessionSigner(settings.effective_session_secret, settings.session_ttl_seconds)
+    calendar = CalendarService(settings, store)
 
     async def current_actor(authorization: Annotated[str | None, Header()] = None) -> Actor:
         if not authorization or not authorization.startswith("Bearer "):
@@ -70,7 +73,15 @@ def build_api_router(settings: Settings, store: Store, service: HomeService) -> 
 
     @router.get("/home")
     async def home(_: Actor = Depends(current_actor)) -> dict[str, Any]:
-        return await store.dashboard()
+        dashboard = await store.dashboard()
+        try:
+            events = await calendar.list_events()
+            dashboard["events"] = events[:5]
+            dashboard["counts"]["events"] = len(events)
+        except Exception:
+            # The rest of the household app remains usable while Google is down.
+            pass
+        return dashboard
 
     @router.get("/activity")
     async def activity(_: Actor = Depends(current_actor), limit: int = Query(default=30, ge=1, le=100)) -> list[dict[str, Any]]:
@@ -117,17 +128,62 @@ def build_api_router(settings: Settings, store: Store, service: HomeService) -> 
             raise HTTPException(status_code=404, detail="Task not found")
 
     @router.get("/events")
-    async def events(_: Actor = Depends(current_actor)) -> list[dict[str, Any]]:
-        return await store.list_events()
+    async def events(_: Actor = Depends(current_actor), sync: bool = False) -> list[dict[str, Any]]:
+        if sync and settings.google_enabled:
+            await calendar.incremental_sync()
+        return await calendar.list_events()
+
+    @router.get("/events/status")
+    async def calendar_status(_: Actor = Depends(current_actor)) -> dict[str, Any]:
+        return await calendar.status()
+
+    @router.post("/events/sync")
+    async def sync_events(_: Actor = Depends(current_actor), full: bool = False) -> dict[str, Any]:
+        if not settings.google_enabled:
+            raise HTTPException(status_code=503, detail="Google Calendar is not configured")
+        return await (calendar.full_sync() if full else calendar.incremental_sync())
+
+    @router.get("/events/{event_id}")
+    async def get_event(event_id: str, _: Actor = Depends(current_actor)) -> dict[str, Any]:
+        event = await calendar.get_event(event_id)
+        if not event:
+            raise HTTPException(status_code=404, detail="Event not found")
+        return event
 
     @router.post("/events", status_code=status.HTTP_201_CREATED)
     async def create_event(body: EventCreate, actor: Actor = Depends(current_actor)) -> dict[str, Any]:
-        return await service.add_event(actor.user_id, title=body.title, start_at=body.start_at, end_at=body.end_at, location=body.location, notes=body.notes, all_day=body.all_day)
+        try:
+            return await calendar.create_event(
+                actor.user_id,
+                title=body.title,
+                start_at=body.start_at,
+                end_at=body.end_at,
+                location=body.location,
+                description=body.description or body.notes,
+                all_day=body.all_day,
+                attendees=body.attendees,
+                recurrence=body.recurrence,
+                reminders=body.reminders,
+            )
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @router.patch("/events/{event_id}")
+    async def update_event(event_id: str, body: EventUpdate, actor: Actor = Depends(current_actor)) -> dict[str, Any]:
+        changes = body.model_dump(exclude_none=True)
+        if "notes" in changes and "description" not in changes:
+            changes["description"] = changes.pop("notes")
+        try:
+            return await calendar.update_event(actor.user_id, event_id, **changes)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @router.delete("/events/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
-    async def delete_event(event_id: int, actor: Actor = Depends(current_actor)) -> None:
-        if not await service.delete_event(actor.user_id, event_id):
-            raise HTTPException(status_code=404, detail="Event not found")
+    async def delete_event(event_id: str, actor: Actor = Depends(current_actor)) -> None:
+        try:
+            await calendar.delete_event(actor.user_id, event_id)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @router.get("/memory")
     async def memory(_: Actor = Depends(current_actor)) -> list[dict[str, Any]]:
@@ -154,15 +210,7 @@ def build_api_router(settings: Settings, store: Store, service: HomeService) -> 
         if not old:
             raise HTTPException(status_code=404, detail="Memory not found")
         await store.set_memory(memory_key, body.value, body.category, actor.user_id)
-        await record_memory_audit(
-            store,
-            action="updated",
-            memory_key=memory_key,
-            old_value=old.get("value", ""),
-            new_value=body.value,
-            source="manual",
-            actor_id=actor.user_id,
-        )
+        await record_memory_audit(store, action="updated", memory_key=memory_key, old_value=old.get("value", ""), new_value=body.value, source="manual", actor_id=actor.user_id)
         return await store.get_memory(memory_key) or {}
 
     @router.delete("/memory/{memory_key}", status_code=status.HTTP_204_NO_CONTENT)
@@ -170,28 +218,13 @@ def build_api_router(settings: Settings, store: Store, service: HomeService) -> 
         old = await store.get_memory(memory_key)
         if not old or not await store.delete_memory(memory_key):
             raise HTTPException(status_code=404, detail="Memory not found")
-        await record_memory_audit(
-            store,
-            action="deleted",
-            memory_key=memory_key,
-            old_value=old.get("value", ""),
-            source="manual",
-            actor_id=actor.user_id,
-            metadata={"deleted_memory": old},
-        )
+        await record_memory_audit(store, action="deleted", memory_key=memory_key, old_value=old.get("value", ""), source="manual", actor_id=actor.user_id, metadata={"deleted_memory": old})
 
     @router.put("/memory/core")
     async def update_core_memory(body: CoreMemoryUpdate, actor: Actor = Depends(current_actor)) -> dict[str, str]:
         old = await store.get_core_memory()
         await store.set_core_memory(body.value.strip())
-        await record_memory_audit(
-            store,
-            action="core_replaced",
-            old_value=old,
-            new_value=body.value.strip(),
-            source="manual",
-            actor_id=actor.user_id,
-        )
+        await record_memory_audit(store, action="core_replaced", old_value=old, new_value=body.value.strip(), source="manual", actor_id=actor.user_id)
         return {"core_memory": await store.get_core_memory()}
 
     @router.get("/notes")
