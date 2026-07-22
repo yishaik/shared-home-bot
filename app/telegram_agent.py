@@ -353,7 +353,7 @@ Rules:
         planned_actions: list[dict[str, Any]] = []
         planned_fingerprints: set[str] = set()
 
-        async with asyncio.timeout(55):
+        async with asyncio.timeout(self.settings.agent_timeout_seconds):
             for _ in range(8):
                 response = await create_completion(
                     self.client,
@@ -361,6 +361,7 @@ Rules:
                     messages=messages,
                     tools=self._tool_specs_for(envelope),
                     temperature=0.2,
+                    reasoning_effort=self.settings.openai_reasoning_effort,
                 )
                 message = response.choices[0].message
                 if message.tool_calls:

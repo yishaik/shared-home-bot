@@ -9,6 +9,7 @@ from openai import BadRequestError
 from app.llm import (
     adapt_responses_output,
     create_completion,
+    is_reasoning_model,
     needs_responses_fallback,
     to_responses_input,
     to_responses_tools,
@@ -95,18 +96,46 @@ class FakeClient:
         self.responses = FakeResponses(responses_result)
 
 
+def test_is_reasoning_model() -> None:
+    assert is_reasoning_model("gpt-5.6-terra") is True
+    assert is_reasoning_model("o3-mini") is True
+    assert is_reasoning_model("gpt-4o") is False
+    assert is_reasoning_model("gpt-4o-mini") is False
+
+
 @pytest.mark.asyncio
-async def test_create_completion_falls_back_to_responses() -> None:
+async def test_reasoning_model_routes_natively_with_effort() -> None:
     responses_result = SimpleNamespace(
         output=[SimpleNamespace(type="function_call", call_id="c1", name="todo_add", arguments="{}")],
         output_text="",
     )
+    # No chat_error needed: a reasoning model must NOT touch chat.completions at all.
+    client = FakeClient(responses_result=responses_result)
+    result = await create_completion(
+        client, model="gpt-5.6-terra", messages=[{"role": "user", "content": "hi"}],
+        tools=[{"type": "function", "function": {"name": "todo_add", "parameters": {}}}],
+        reasoning_effort="medium",
+    )
+    assert client.chat.completions.calls == 0  # never used chat.completions
+    assert client.responses.calls == 1
+    assert client.responses.captured["reasoning"] == {"effort": "medium"}
+    assert "temperature" not in client.responses.captured  # reasoning models reject it
+    assert result.choices[0].message.tool_calls[0].function.name == "todo_add"
+
+
+@pytest.mark.asyncio
+async def test_non_reasoning_model_falls_back_to_responses_on_error() -> None:
+    responses_result = SimpleNamespace(
+        output=[SimpleNamespace(type="function_call", call_id="c1", name="todo_add", arguments="{}")],
+        output_text="",
+    )
+    # A non-reasoning model that a proxy still rejects for tools → responses fallback.
     client = FakeClient(chat_error=_bad_request("use /v1/responses"), responses_result=responses_result)
-    result = await create_completion(client, model="gpt-5.6-terra", messages=[{"role": "user", "content": "hi"}],
+    result = await create_completion(client, model="gpt-4o-proxy", messages=[{"role": "user", "content": "hi"}],
                                      tools=[{"type": "function", "function": {"name": "todo_add", "parameters": {}}}])
+    assert client.chat.completions.calls == 1
     assert client.responses.calls == 1
     assert result.choices[0].message.tool_calls[0].function.name == "todo_add"
-    assert client.responses.captured["tools"][0]["name"] == "todo_add"
 
 
 @pytest.mark.asyncio

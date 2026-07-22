@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     openai_model: str = Field(default="gpt-4o", alias="OPENAI_MODEL")
     openai_base_url: str | None = Field(default=None, alias="OPENAI_BASE_URL")
     embedding_model: str = Field(default="text-embedding-3-small", alias="EMBEDDING_MODEL")
+    # Reasoning effort for GPT-5.x / o-series models (Responses API): minimal|low|medium|high.
+    openai_reasoning_effort: str = Field(default="low", alias="OPENAI_REASONING_EFFORT")
+    # Per-reply agent budget. Reasoning models are slower — raise this when using one.
+    agent_timeout_seconds: int = Field(default=55, alias="AGENT_TIMEOUT_SECONDS")
 
     home_name: str = Field(default="הבית שלנו", alias="HOME_NAME")
     bot_display_name: str = Field(default="Home", alias="BOT_DISPLAY_NAME")
