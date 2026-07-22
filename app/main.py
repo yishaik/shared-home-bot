@@ -24,6 +24,7 @@ from app.notification_service import NotificationService
 from app.proactive import ProactiveEngine
 from app.services import HomeService
 from app.store_v2 import Store
+from app.telegram_inline import install_inline_handlers
 from app.work_service import WorkService
 
 settings = get_settings()
@@ -81,6 +82,7 @@ def create_app() -> FastAPI:
 
         bot_work_patch.apply()
         tg_app = build_application(settings, store, service)
+        install_inline_handlers(tg_app, settings, store)
         platform = tg_app.bot_data["telegram_platform"]
         state.update(tg_app=tg_app, platform=platform)
         await tg_app.initialize()
@@ -169,7 +171,8 @@ def create_app() -> FastAPI:
     async def root():
         return {"ok": True, "bot": settings.bot_display_name, "home": settings.home_name,
                 "mode": "webhook" if settings.webhook_url else "polling", "mini_app": bool(settings.resolved_mini_app_url),
-                "telegram_platform": "v3", "files": True, "proactive": True, "projects": True}
+                "telegram_platform": "v3", "files": True, "proactive": True, "projects": True,
+                "inline": settings.telegram_inline_enabled}
 
     @api.get("/health/live")
     async def live():
