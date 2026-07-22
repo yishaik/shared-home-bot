@@ -32,8 +32,12 @@ class TelegramEnvelope:
         return self.chat_type in {"group", "supergroup"}
 
     @property
+    def topic_id(self) -> int | None:
+        return self.thread_id or self.direct_messages_topic_id
+
+    @property
     def scope_key(self) -> str:
-        return f"telegram:{self.chat_id}:{self.thread_id or 0}"
+        return f"telegram:{self.chat_id}:{self.topic_id or 0}"
 
     @classmethod
     def from_update(cls, update: Update, *, bot_username: str = "") -> "TelegramEnvelope | None":
