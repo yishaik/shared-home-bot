@@ -708,7 +708,8 @@ class SmartInboxService:
             tuple(params),
         )
         if cur.rowcount != 1:
-            await self.store.db.rollback()
+            # This connection is shared by concurrent async handlers. A rollback here
+            # could undo another handler's successful claim that has not committed yet.
             raise InboxConflictError("Proposal changed; refresh before acting")
         await self._audit(
             proposal_id, actor_id, action, proposal["status"], to_status, {}
@@ -767,7 +768,8 @@ class SmartInboxService:
             ),
         )
         if cur.rowcount != 1:
-            await self.store.db.rollback()
+            # A zero-row compare-and-swap is already a clean conflict. Never rollback
+            # the shared connection: another coroutine may own the active transaction.
             raise InboxConflictError("Proposal was claimed by another request")
         await self._audit(
             proposal_id,
@@ -949,10 +951,12 @@ class SmartInboxService:
         executor: Executor | None = None,
     ) -> dict[str, Any]:
         proposal = await self.get(proposal_id, actor_id)
+        if proposal["status"] == "needs_review" or any(
+            step["status"] in {"executing", "uncertain"} for step in proposal["steps"]
+        ):
+            raise InboxNeedsReviewError("Manual review is required")
         if proposal["status"] != "failed":
             raise InboxConflictError("Only failed proposals can be retried")
-        if any(step["status"] in {"executing", "uncertain"} for step in proposal["steps"]):
-            raise InboxNeedsReviewError("Manual review is required")
         return await self.approve(
             proposal_id,
             actor_id,
