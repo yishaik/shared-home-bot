@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { api, authenticate } from './api'
+import { MemoryPanel } from './MemoryPanel'
 import { hapticSelection, hapticSuccess, tg } from './telegram'
 import type { Activity, Dashboard, HomeEvent, Household, ShoppingItem, Todo } from './types'
 
@@ -136,16 +137,17 @@ function Events({ items, setItems, onError }: { items: HomeEvent[]; setItems: (v
 function Settings({ household, setHousehold, activity, onError }: { household: Household; setHousehold: (v: Household) => void; activity: Activity[]; onError: (v: string) => void }) {
   const [name, setName] = useState(household.name)
   const save = async (e: FormEvent) => { e.preventDefault(); try { const updated = await api.updateHousehold({ name }); setHousehold(updated); hapticSuccess() } catch (err) { onError(String(err)) } }
-  return <section className="page"><PageTitle title="הבית" subtitle="הגדרות ופעילות" />
+  return <section className="page"><PageTitle title="הבית" subtitle="הגדרות, פרטיות ופעילות" />
     <Section title="זהות הבית"><form className="settings-form" onSubmit={save}><label>שם הבית<input value={name} onChange={e => setName(e.target.value)}/></label><label>אזור זמן<input value={household.timezone} disabled/></label><button className="primary-button">שמירת שינויים</button></form></Section>
+    <Section title="זיכרון ופרטיות"><MemoryPanel onError={onError} /></Section>
     <Section title="פעילות אחרונה">{activity.slice(0, 12).map(item => <ActivityRow key={item.id} item={item}/>)}</Section>
-    <div className="privacy-note"><strong>פרטי כברירת מחדל</strong><p>הגישה מאומתת מול Telegram והמידע משותף רק לחברי הבית שהוגדרו.</p></div>
+    <div className="privacy-note"><strong>פרטי כברירת מחדל</strong><p>הגישה מאומתת מול Telegram. זיכרונות אוטומטיים ניתנים לכיבוי, עריכה ומחיקה, וכל שינוי נרשם ביומן.</p></div>
   </section>
 }
 
 function PageTitle({ title, subtitle }: { title: string; subtitle: string }) { return <div className="page-title"><div><h2>{title}</h2><p>{subtitle}</p></div></div> }
 function Section({ title, action, onAction, children }: { title: string; action?: string; onAction?: () => void; children: React.ReactNode }) { return <section className="content-section"><div className="section-heading"><h3>{title}</h3>{action && <button onClick={onAction}>{action}</button>}</div><div className="section-body">{children}</div></section> }
 function Empty({ text }: { text: string }) { return <div className="empty-state"><span>◇</span><p>{text}</p></div> }
-function ActivityRow({ item }: { item: Activity }) { return <div className="activity-row"><span className="activity-icon">{item.entity_type === 'shopping' ? '🛒' : item.entity_type === 'todo' ? '✓' : item.entity_type === 'event' ? '◷' : '•'}</span><div><strong>{item.summary}</strong><small>{item.actor_name || 'הבית'} · {new Intl.DateTimeFormat('he-IL', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' }).format(new Date(item.created_at * 1000))}</small></div></div> }
+function ActivityRow({ item }: { item: Activity }) { return <div className="activity-row"><span className="activity-icon">{item.entity_type === 'shopping' ? '🛒' : item.entity_type === 'todo' ? '✓' : item.entity_type === 'event' ? '◷' : item.entity_type === 'memory' ? '🧠' : '•'}</span><div><strong>{item.summary}</strong><small>{item.actor_name || 'הבית'} · {new Intl.DateTimeFormat('he-IL', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' }).format(new Date(item.created_at * 1000))}</small></div></div> }
 
 export default App
