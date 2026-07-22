@@ -17,3 +17,4 @@ for _name in (
 # Domain patches are loaded once for every entrypoint (API, Telegram and tests).
 from app import calendar_service_patch as _calendar_service_patch  # noqa: E402,F401
 from app import work_service_patch as _work_service_patch  # noqa: E402,F401
+from app import tools_runtime_patch as _tools_runtime_patch  # noqa: E402,F401
