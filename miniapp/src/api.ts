@@ -1,4 +1,4 @@
-import type { Activity, CalendarStatus, Dashboard, HomeEvent, Household, MemoryControl, MemoryItem, Project, ShoppingItem, TaskCalendarBlock, TaskRelationship, TaskResource, Todo } from './types'
+import type { Activity, CalendarStatus, Dashboard, HomeEvent, Household, InboxCounts, InboxProposal, MemoryControl, MemoryItem, Project, ShoppingItem, TaskCalendarBlock, TaskRelationship, TaskResource, Todo } from './types'
 
 let token = sessionStorage.getItem('home_session') || ''
 
@@ -22,6 +22,12 @@ export async function authenticate(initData: string) {
 export type EventPayload = { title: string; start_at: string; end_at: string; location?: string; description?: string; notes?: string; all_day?: boolean; attendees?: string[]; recurrence?: string[]; reminders?: Record<string, unknown> }
 export type ProjectPayload = { name: string; description?: string; status?: Project['status']; owner_id?: number | null; start_at?: string | null; due_at?: string | null; priority?: Project['priority']; create_drive_folder?: boolean }
 export type TaskPayload = { title: string; description?: string; project_id?: number | null; parent_task_id?: number | null; status?: Todo['status']; assigned_to?: number | null; due_at?: string | null; priority?: Todo['priority']; recurrence_rule?: string; estimate_minutes?: number | null }
+
+const inboxMutation = (id: string, action: 'approve' | 'retry' | 'cancel' | 'edit', expectedVersion: number) =>
+  request<InboxProposal>(`/api/inbox/${encodeURIComponent(id)}/${action}`, {
+    method: 'POST',
+    body: JSON.stringify({ expected_version: expectedVersion }),
+  })
 
 export const api = {
   home: () => request<Dashboard>('/api/home'),
@@ -62,4 +68,15 @@ export const api = {
   updateCoreMemory: (value: string) => request<{ core_memory: string }>('/api/memory/core', { method: 'PUT', body: JSON.stringify({ value }) }),
   household: () => request<{ household: Household; members: Dashboard['members'] }>('/api/household'),
   updateHousehold: (patch: Partial<Household>) => request<Household>('/api/household', { method: 'PATCH', body: JSON.stringify(patch) }),
+  inbox: (status?: string, limit = 50) => {
+    const params = new URLSearchParams({ limit: String(limit) })
+    if (status) params.set('status', status)
+    return request<InboxProposal[]>(`/api/inbox?${params}`)
+  },
+  inboxCounts: () => request<InboxCounts>('/api/inbox/counts'),
+  inboxProposal: (id: string) => request<InboxProposal>(`/api/inbox/${encodeURIComponent(id)}`),
+  approveInbox: (id: string, expectedVersion: number) => inboxMutation(id, 'approve', expectedVersion),
+  retryInbox: (id: string, expectedVersion: number) => inboxMutation(id, 'retry', expectedVersion),
+  cancelInbox: (id: string, expectedVersion: number) => inboxMutation(id, 'cancel', expectedVersion),
+  editInbox: (id: string, expectedVersion: number) => inboxMutation(id, 'edit', expectedVersion),
 }

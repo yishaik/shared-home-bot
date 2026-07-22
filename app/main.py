@@ -9,10 +9,17 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
-from telegram import BotCommand, BotCommandScopeAllGroupChats, BotCommandScopeAllPrivateChats, MenuButtonWebApp, Update, WebAppInfo
+from telegram import (
+    BotCommand,
+    BotCommandScopeAllGroupChats,
+    BotCommandScopeAllPrivateChats,
+    MenuButtonWebApp,
+    Update,
+    WebAppInfo,
+)
 
-from app.api import build_api_router
 from app import bot_work_patch
+from app.api import build_api_router
 from app.bot import build_application
 from app.calendar_service import CalendarService
 from app.config import get_settings
@@ -23,24 +30,35 @@ from app.memory_control import ensure_memory_control_schema
 from app.notification_service import NotificationService
 from app.proactive import ProactiveEngine
 from app.services import HomeService
+from app.smart_inbox_api import build_smart_inbox_router
+from app.smart_inbox_service import SmartInboxService
 from app.store_v2 import Store
 from app.telegram_inline import install_inline_handlers
 from app.work_service import WorkService
 
 settings = get_settings()
-logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logging.basicConfig(
+    level=getattr(logging, settings.log_level.upper(), logging.INFO),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 log = logging.getLogger("homebot")
 
 
 def create_app() -> FastAPI:
     store = Store(settings.db_path, settings.household_id)
     service = HomeService(store)
+    inbox = SmartInboxService(settings, store, service)
     drive = DriveService(settings, store)
     calendar = CalendarService(settings, store)
     work = WorkService(settings, store, calendar, drive)
     members = MemberService(store)
     notifications = NotificationService(store, settings)
-    state: dict = {"tg_app": None, "platform": None, "ready": False, "workers": set()}
+    state: dict = {
+        "tg_app": None,
+        "platform": None,
+        "ready": False,
+        "workers": set(),
+    }
 
     def own_task(coro) -> asyncio.Task:
         task = asyncio.create_task(coro)
@@ -63,22 +81,35 @@ def create_app() -> FastAPI:
         settings.require_runtime()
         await store.connect()
         await ensure_memory_control_schema(store)
-        await store.bootstrap_household(settings.home_name, settings.household_timezone, settings.allowed_user_ids)
+        await store.bootstrap_household(
+            settings.home_name,
+            settings.household_timezone,
+            settings.allowed_user_ids,
+        )
         await members.ensure_schema()
         await work.ensure_schema()
         await calendar.ensure_schema()
         await notifications.ensure_schema()
+        await inbox.ensure_schema()
         try:
             await store.attach_memory(settings)
         except Exception:
-            log.exception("memory engine attach failed — continuing with lexical fallback")
+            log.exception(
+                "memory engine attach failed — continuing with lexical fallback"
+            )
 
         stored_google_refresh = await store.get_setting("google_refresh_token")
-        if settings.google_client_id and settings.google_client_secret and (settings.google_refresh_token or stored_google_refresh):
+        if (
+            settings.google_client_id
+            and settings.google_client_secret
+            and (settings.google_refresh_token or stored_google_refresh)
+        ):
             try:
                 await drive.ensure_root()
             except Exception:
-                log.exception("Google Drive root initialization failed — files section remains unavailable")
+                log.exception(
+                    "Google Drive root initialization failed — files section remains unavailable"
+                )
 
         bot_work_patch.apply()
         tg_app = build_application(settings, store, service)
@@ -90,29 +121,52 @@ def create_app() -> FastAPI:
         await tg_app.start()
 
         if settings.resolved_mini_app_url:
-            await tg_app.bot.set_chat_menu_button(menu_button=MenuButtonWebApp(text="הבית", web_app=WebAppInfo(url=settings.resolved_mini_app_url)))
+            await tg_app.bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(
+                    text="הבית",
+                    web_app=WebAppInfo(url=settings.resolved_mini_app_url),
+                )
+            )
 
         private_commands = [
-            BotCommand("start", "פתיחת הבית"), BotCommand("menu", "תפריט כפתורים"),
+            BotCommand("start", "פתיחת הבית"),
+            BotCommand("menu", "תפריט כפתורים"),
             BotCommand("app", "אפליקציית הבית"),
-            BotCommand("todos", "משימות ופרויקטים"), BotCommand("shop", "קניות"),
-            BotCommand("events", "אירועים"), BotCommand("agents", "סוכנים זמינים"),
-            BotCommand("topic", "יצירת נושא חדש"), BotCommand("topics", "רשימת נושאים"),
+            BotCommand("todos", "משימות ופרויקטים"),
+            BotCommand("shop", "קניות"),
+            BotCommand("events", "אירועים"),
+            BotCommand("agents", "סוכנים זמינים"),
+            BotCommand("topic", "יצירת נושא חדש"),
+            BotCommand("topics", "רשימת נושאים"),
             BotCommand("help", "עזרה"),
         ]
         group_commands = [
-            BotCommand("todos", "משימות ופרויקטים"), BotCommand("shop", "קניות"),
-            BotCommand("events", "אירועים"), BotCommand("agents", "סוכנים זמינים"),
-            BotCommand("agent", "חיבור הנושא לסוכן"), BotCommand("topic", "יצירת נושא חדש"),
-            BotCommand("topics", "רשימת נושאים"), BotCommand("chatid", "מזהה הצ׳אט והנושא"),
+            BotCommand("todos", "משימות ופרויקטים"),
+            BotCommand("shop", "קניות"),
+            BotCommand("events", "אירועים"),
+            BotCommand("agents", "סוכנים זמינים"),
+            BotCommand("agent", "חיבור הנושא לסוכן"),
+            BotCommand("topic", "יצירת נושא חדש"),
+            BotCommand("topics", "רשימת נושאים"),
+            BotCommand("chatid", "מזהה הצ׳אט והנושא"),
             BotCommand("help", "עזרה"),
         ]
-        await tg_app.bot.set_my_commands(private_commands, scope=BotCommandScopeAllPrivateChats())
-        await tg_app.bot.set_my_commands(group_commands, scope=BotCommandScopeAllGroupChats())
+        await tg_app.bot.set_my_commands(
+            private_commands,
+            scope=BotCommandScopeAllPrivateChats(),
+        )
+        await tg_app.bot.set_my_commands(
+            group_commands,
+            scope=BotCommandScopeAllGroupChats(),
+        )
 
         if settings.webhook_url:
-            await tg_app.bot.set_webhook(url=settings.webhook_url, allowed_updates=Update.ALL_TYPES,
-                                         drop_pending_updates=False, secret_token=settings.telegram_webhook_secret)
+            await tg_app.bot.set_webhook(
+                url=settings.webhook_url,
+                allowed_updates=Update.ALL_TYPES,
+                drop_pending_updates=False,
+                secret_token=settings.telegram_webhook_secret,
+            )
             log.info("webhook configured")
         else:
             await tg_app.bot.delete_webhook(drop_pending_updates=False)
@@ -134,6 +188,7 @@ def create_app() -> FastAPI:
         app.state.proactive = engine
         app.state.calendar = calendar
         app.state.work = work
+        app.state.inbox = inbox
         state["ready"] = True
         yield
         state["ready"] = False
@@ -151,8 +206,13 @@ def create_app() -> FastAPI:
         await tg_app.shutdown()
         await store.close()
 
-    api = FastAPI(title="Shared Home Bot", version="3.1.0", lifespan=lifespan)
+    api = FastAPI(
+        title="Shared Home Bot",
+        version="3.2.0",
+        lifespan=lifespan,
+    )
     api.include_router(build_api_router(settings, store, service))
+    api.include_router(build_smart_inbox_router(settings, store, inbox))
     api.include_router(build_files_router(settings, store, drive))
 
     @api.middleware("http")
@@ -161,8 +221,15 @@ def create_app() -> FastAPI:
         try:
             response = await call_next(request)
         except Exception:
-            log.exception("unhandled request error id=%s path=%s", request_id, request.url.path)
-            return JSONResponse({"detail": "Internal error", "request_id": request_id}, status_code=500)
+            log.exception(
+                "unhandled request error id=%s path=%s",
+                request_id,
+                request.url.path,
+            )
+            return JSONResponse(
+                {"detail": "Internal error", "request_id": request_id},
+                status_code=500,
+            )
         response.headers["X-Request-ID"] = request_id
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "same-origin"
@@ -170,10 +237,19 @@ def create_app() -> FastAPI:
 
     @api.get("/")
     async def root():
-        return {"ok": True, "bot": settings.bot_display_name, "home": settings.home_name,
-                "mode": "webhook" if settings.webhook_url else "polling", "mini_app": bool(settings.resolved_mini_app_url),
-                "telegram_platform": "v3", "files": True, "proactive": True, "projects": True,
-                "inline": settings.telegram_inline_enabled}
+        return {
+            "ok": True,
+            "bot": settings.bot_display_name,
+            "home": settings.home_name,
+            "mode": "webhook" if settings.webhook_url else "polling",
+            "mini_app": bool(settings.resolved_mini_app_url),
+            "telegram_platform": "v3",
+            "files": True,
+            "proactive": True,
+            "projects": True,
+            "smart_inbox": True,
+            "inline": settings.telegram_inline_enabled,
+        }
 
     @api.get("/health/live")
     async def live():
@@ -186,8 +262,16 @@ def create_app() -> FastAPI:
         try:
             await store.get_household()
         except Exception:
-            return JSONResponse({"status": "database_unavailable"}, status_code=503)
-        return {"status": "ready", "calendar": await calendar.status(), "workers": len(state["workers"])}
+            return JSONResponse(
+                {"status": "database_unavailable"},
+                status_code=503,
+            )
+        return {
+            "status": "ready",
+            "calendar": await calendar.status(),
+            "inbox": await inbox.health(),
+            "workers": len(state["workers"]),
+        }
 
     @api.get("/health")
     async def health():
@@ -195,10 +279,16 @@ def create_app() -> FastAPI:
 
     @api.post("/telegram/webhook")
     async def telegram_webhook(request: Request):
-        received_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-        if not settings.telegram_webhook_secret or received_secret != settings.telegram_webhook_secret:
+        received_secret = request.headers.get(
+            "X-Telegram-Bot-Api-Secret-Token", ""
+        )
+        if (
+            not settings.telegram_webhook_secret
+            or received_secret != settings.telegram_webhook_secret
+        ):
             return Response(status_code=403)
-        tg_app, platform = state["tg_app"], state["platform"]
+        tg_app = state["tg_app"]
+        platform = state["platform"]
         if tg_app is None or platform is None:
             return Response(status_code=503)
         payload = await request.json()
@@ -221,55 +311,116 @@ def create_app() -> FastAPI:
     async def mini_app(path: str = ""):
         index = frontend_dir / "index.html"
         if not index.exists():
-            return JSONResponse({"detail": "Mini App is not built"}, status_code=503)
+            return JSONResponse(
+                {"detail": "Mini App is not built"},
+                status_code=503,
+            )
         requested = (frontend_dir / path).resolve() if path else index
-        if path and requested.is_file() and frontend_dir.resolve() in requested.parents:
+        if (
+            path
+            and requested.is_file()
+            and frontend_dir.resolve() in requested.parents
+        ):
             return FileResponse(requested)
         return FileResponse(index)
 
     def _setup_ok(secret: str) -> bool:
-        return bool(settings.google_oauth_setup_secret) and secret == settings.google_oauth_setup_secret
+        return (
+            bool(settings.google_oauth_setup_secret)
+            and secret == settings.google_oauth_setup_secret
+        )
 
     @api.get("/google/oauth/start")
     async def google_oauth_start(secret: str = ""):
         if not _setup_ok(secret):
             return Response(status_code=404)
         if not settings.google_client_id or not settings.resolved_public_url:
-            return JSONResponse({"detail": "GOOGLE_CLIENT_ID / public URL not set"}, status_code=400)
+            return JSONResponse(
+                {"detail": "GOOGLE_CLIENT_ID / public URL not set"},
+                status_code=400,
+            )
         from urllib.parse import urlencode
         from app.google_client import SCOPES
         from fastapi.responses import RedirectResponse
-        params = {"client_id": settings.google_client_id,
-                  "redirect_uri": f"{settings.resolved_public_url}/google/oauth/callback",
-                  "response_type": "code", "scope": " ".join(SCOPES), "access_type": "offline",
-                  "prompt": "consent", "include_granted_scopes": "true", "state": settings.google_oauth_setup_secret}
-        return RedirectResponse("https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(params))
+
+        params = {
+            "client_id": settings.google_client_id,
+            "redirect_uri": f"{settings.resolved_public_url}/google/oauth/callback",
+            "response_type": "code",
+            "scope": " ".join(SCOPES),
+            "access_type": "offline",
+            "prompt": "consent",
+            "include_granted_scopes": "true",
+            "state": settings.google_oauth_setup_secret,
+        }
+        return RedirectResponse(
+            "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(params)
+        )
 
     @api.get("/google/oauth/callback")
-    async def google_oauth_callback(code: str = "", state: str = "", error: str = ""):
+    async def google_oauth_callback(
+        code: str = "",
+        state: str = "",
+        error: str = "",
+    ):
         if not _setup_ok(state):
             return Response(status_code=404)
         if error or not code:
-            return JSONResponse({"detail": f"oauth error: {error or 'missing code'}"}, status_code=400)
+            return JSONResponse(
+                {"detail": f"oauth error: {error or 'missing code'}"},
+                status_code=400,
+            )
         import httpx
+
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post("https://oauth2.googleapis.com/token", data={
-                "code": code, "client_id": settings.google_client_id, "client_secret": settings.google_client_secret,
-                "redirect_uri": f"{settings.resolved_public_url}/google/oauth/callback", "grant_type": "authorization_code"})
-        data = resp.json(); refresh = data.get("refresh_token")
+            resp = await client.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "code": code,
+                    "client_id": settings.google_client_id,
+                    "client_secret": settings.google_client_secret,
+                    "redirect_uri": (
+                        f"{settings.resolved_public_url}/google/oauth/callback"
+                    ),
+                    "grant_type": "authorization_code",
+                },
+            )
+        data = resp.json()
+        refresh = data.get("refresh_token")
         if not refresh:
-            return JSONResponse({"detail": "no refresh_token (re-consent with prompt=consent)", "response": data}, status_code=400)
+            return JSONResponse(
+                {
+                    "detail": (
+                        "no refresh_token "
+                        "(re-consent with prompt=consent)"
+                    ),
+                    "response": data,
+                },
+                status_code=400,
+            )
         await store.set_setting("google_refresh_token", refresh)
         settings.google_refresh_token = refresh
         drive.reset_credentials()
         log.info("google oauth: refresh token stored (len=%s)", len(refresh))
-        return Response(content="<html><body style='font-family:system-ui;padding:2rem'><h2>✅ Google מחובר</h2><p>אפשר לסגור את הדף. Shared Home Bot ישלים מכאן.</p></body></html>", media_type="text/html")
+        return Response(
+            content=(
+                "<html><body style='font-family:system-ui;padding:2rem'>"
+                "<h2>✅ Google מחובר</h2>"
+                "<p>אפשר לסגור את הדף. Shared Home Bot ישלים מכאן.</p>"
+                "</body></html>"
+            ),
+            media_type="text/html",
+        )
 
     @api.get("/google/oauth/token")
     async def google_oauth_token(secret: str = ""):
         if not _setup_ok(secret):
             return Response(status_code=404)
-        return {"refresh_token": await store.get_setting("google_refresh_token")}
+        return {
+            "refresh_token": await store.get_setting(
+                "google_refresh_token"
+            )
+        }
 
     return api
 
@@ -279,7 +430,13 @@ app = create_app()
 
 def run() -> None:
     import uvicorn
-    uvicorn.run("app.main:app", host="0.0.0.0", port=int(os.environ.get("PORT", settings.port)), reload=False)
+
+    uvicorn.run(
+        "app.main:app",
+        host="0.0.0.0",
+        port=int(os.environ.get("PORT", settings.port)),
+        reload=False,
+    )
 
 
 if __name__ == "__main__":

@@ -2,14 +2,57 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { api, authenticate } from './api'
 import { EventsPanel } from './EventsPanel'
 import { FilesPage } from './FilesPage'
+import { InboxPanel } from './InboxPanel'
 import { MemoryPanel } from './MemoryPanel'
 import { WorkPanel } from './WorkPanel'
 import { hapticSelection, hapticSuccess, tg } from './telegram'
-import type { Activity, CalendarStatus, Dashboard, HomeEvent, Household, Project, ShoppingItem, Todo } from './types'
+import type {
+  Activity,
+  CalendarStatus,
+  Dashboard,
+  HomeEvent,
+  Household,
+  InboxCounts,
+  Project,
+  ShoppingItem,
+  Todo,
+} from './types'
 
-type Tab = 'home' | 'shopping' | 'tasks' | 'events' | 'files' | 'settings'
-const tabFromUrl = (): Tab => { const value = new URLSearchParams(location.search).get('tab'); return ['shopping', 'tasks', 'events', 'files', 'settings'].includes(value || '') ? value as Tab : 'home' }
-const dateText = (value?: string | null) => { if (!value) return 'ללא תאריך'; const date = new Date(value); return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('he-IL', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(date) }
+type Tab = 'home' | 'inbox' | 'shopping' | 'tasks' | 'events' | 'files' | 'settings'
+
+const emptyInboxCounts = (): InboxCounts => ({
+  pending: 0,
+  executing: 0,
+  completed: 0,
+  failed: 0,
+  needs_review: 0,
+  editing: 0,
+  cancelled: 0,
+  expired: 0,
+  attention: 0,
+})
+
+const tabFromUrl = (): Tab => {
+  const value = new URLSearchParams(location.search).get('tab')
+  return ['inbox', 'shopping', 'tasks', 'events', 'files', 'settings'].includes(value || '')
+    ? value as Tab
+    : 'home'
+}
+
+const dateText = (value?: string | null) => {
+  if (!value) return 'ללא תאריך'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime())
+    ? value
+    : new Intl.DateTimeFormat('he-IL', {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(date)
+}
+
 const errorText = (caught: unknown) => caught instanceof Error ? caught.message : String(caught)
 
 function App() {
@@ -22,6 +65,7 @@ function App() {
   const [calendarStatus, setCalendarStatus] = useState<CalendarStatus>({ configured: false })
   const [activity, setActivity] = useState<Activity[]>([])
   const [household, setHousehold] = useState<Household | null>(null)
+  const [inboxCounts, setInboxCounts] = useState<InboxCounts>(emptyInboxCounts)
   const [userName, setUserName] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
@@ -37,8 +81,14 @@ function App() {
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setRefreshing(true)
     try {
-      const [home, shop, taskRows, projectRows, eventRows, activityRows] = await Promise.allSettled([
-        api.home(), api.shopping(), api.tasks(), api.projects(), api.events(), api.activity(),
+      const [home, shop, taskRows, projectRows, eventRows, activityRows, counts] = await Promise.allSettled([
+        api.home(),
+        api.shopping(),
+        api.tasks(),
+        api.projects(),
+        api.events(),
+        api.activity(),
+        api.inboxCounts(),
       ] as const)
       const failures: unknown[] = []
 
@@ -58,50 +108,431 @@ function App() {
       else failures.push(eventRows.reason)
       if (activityRows.status === 'fulfilled') setActivity(activityRows.value)
       else failures.push(activityRows.reason)
+      if (counts.status === 'fulfilled') setInboxCounts(counts.value)
+      else failures.push(counts.reason)
 
-      if (failures.length < 6) setLastSync(new Date())
+      if (failures.length < 7) setLastSync(new Date())
       if (home.status === 'rejected') throw home.reason
       if (!quiet && failures.length) setError('חלק מהמידע לא הסתנכרן. הנתונים שהתקבלו עודכנו.')
-    } finally { if (!quiet) setRefreshing(false) }
+      if (!failures.length) setError('')
+    } finally {
+      if (!quiet) setRefreshing(false)
+    }
   }, [])
 
-  useEffect(() => { ;(async () => { try { const initData = tg?.initData || ''; if (!sessionStorage.getItem('home_session')) { if (!initData) throw new Error('פתח את האפליקציה מתוך הבוט בטלגרם כדי להתחבר בבטחה.'); const auth = await authenticate(initData); setUserName(auth.user.name) } await load(true) } catch (caught) { setError(caught instanceof Error ? caught.message : 'אירעה שגיאה') } finally { setLoading(false) } })() }, [load])
-  useEffect(() => { const refresh = () => { if (document.visibilityState === 'visible') load(true).catch(caught => setError(errorText(caught))) }; const timer = window.setInterval(refresh, 30000); document.addEventListener('visibilitychange', refresh); return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', refresh) } }, [load])
   useEffect(() => {
-    if (tab !== 'tasks') return
-    const refresh = () => { if (document.visibilityState === 'visible') refreshTasks().catch(caught => setError(errorText(caught))) }
+    ;(async () => {
+      try {
+        const initData = tg?.initData || ''
+        if (!sessionStorage.getItem('home_session')) {
+          if (!initData) throw new Error('פתח את האפליקציה מתוך הבוט בטלגרם כדי להתחבר בבטחה.')
+          const auth = await authenticate(initData)
+          setUserName(auth.user.name)
+        }
+        await load(true)
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : 'אירעה שגיאה')
+      } finally {
+        setLoading(false)
+      }
+    })()
+  }, [load])
+
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState === 'visible') {
+        load(true).catch(caught => setError(errorText(caught)))
+      }
+    }
+    const timer = window.setInterval(refresh, 30000)
+    document.addEventListener('visibilitychange', refresh)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', refresh)
+    }
+  }, [load])
+
+  useEffect(() => {
+    if (loading || tab !== 'tasks') return
+    const refresh = () => {
+      if (document.visibilityState === 'visible') {
+        refreshTasks().catch(caught => setError(errorText(caught)))
+      }
+    }
     refresh()
     const timer = window.setInterval(refresh, 10000)
     return () => window.clearInterval(timer)
-  }, [tab, refreshTasks])
-  const navigate = (next: Tab) => { hapticSelection(); setTab(next); history.replaceState(null, '', next === 'home' ? '/app' : `/app?tab=${next}`) }
-  const refresh = async () => { try { await load() } catch (caught) { setError(errorText(caught)) } }
+  }, [loading, tab, refreshTasks])
+
+  const navigate = (next: Tab) => {
+    hapticSelection()
+    setTab(next)
+    history.replaceState(null, '', next === 'home' ? '/app' : `/app?tab=${next}`)
+  }
+
+  const refresh = async () => {
+    try {
+      await load()
+    } catch (caught) {
+      setError(errorText(caught))
+    }
+  }
+
   if (loading) return <Loading />
   if (error && !dashboard) return <FatalError message={error} />
 
   return <div className="app-shell">
-    <header className="topbar"><div><span className="eyebrow">המרכז המשפחתי</span><h1>{household?.name || 'הבית שלנו'}</h1></div><div className="top-actions"><button className={refreshing ? 'icon-button spinning' : 'icon-button'} onClick={refresh} aria-label="רענון">↻</button><div className="avatar" aria-label={userName || 'משתמש'}>{(userName || 'ב').slice(0, 1)}</div></div></header>
-    <div className="sync-line">{lastSync ? `עודכן ${new Intl.DateTimeFormat('he-IL', { hour: '2-digit', minute: '2-digit' }).format(lastSync)}` : 'מתחבר…'}</div>
+    <header className="topbar">
+      <div>
+        <span className="eyebrow">המרכז המשפחתי</span>
+        <h1>{household?.name || 'הבית שלנו'}</h1>
+      </div>
+      <div className="top-actions">
+        <button
+          className={tab === 'inbox' ? 'icon-button inbox-top-button active' : 'icon-button inbox-top-button'}
+          onClick={() => navigate('inbox')}
+          aria-label={`Inbox${inboxCounts.attention ? `, ${inboxCounts.attention} דורשים תשומת לב` : ''}`}
+        >
+          📥
+          {inboxCounts.attention > 0 && <b className="nav-badge">{inboxCounts.attention}</b>}
+        </button>
+        <button
+          className={refreshing ? 'icon-button spinning' : 'icon-button'}
+          onClick={refresh}
+          aria-label="רענון"
+        >↻</button>
+        <div className="avatar" aria-label={userName || 'משתמש'}>{(userName || 'ב').slice(0, 1)}</div>
+      </div>
+    </header>
+
+    <div className="sync-line">
+      {lastSync
+        ? `עודכן ${new Intl.DateTimeFormat('he-IL', { hour: '2-digit', minute: '2-digit' }).format(lastSync)}`
+        : 'מתחבר…'}
+    </div>
     {error && <button className="error-banner" onClick={() => setError('')}>{error} ×</button>}
+
     <main>
-      {tab === 'home' && dashboard && <Home dashboard={{ ...dashboard, todos: tasks, projects, events }} onNavigate={navigate} />}
+      {tab === 'home' && dashboard && <Home
+        dashboard={{ ...dashboard, todos: tasks, projects, events }}
+        inboxAttention={inboxCounts.attention}
+        onNavigate={navigate}
+      />}
+      {tab === 'inbox' && <InboxPanel onError={setError} onCountsChange={setInboxCounts} />}
       {tab === 'shopping' && <Shopping items={shopping} setItems={setShopping} onError={setError} />}
-      {tab === 'tasks' && <WorkPanel tasks={tasks} projects={projects} members={dashboard?.members || []} setTasks={setTasks} setProjects={setProjects} onError={setError} />}
-      {tab === 'events' && <EventsPanel items={events} status={calendarStatus} setItems={setEvents} setStatus={setCalendarStatus} onError={setError} />}
+      {tab === 'tasks' && <WorkPanel
+        tasks={tasks}
+        projects={projects}
+        members={dashboard?.members || []}
+        setTasks={setTasks}
+        setProjects={setProjects}
+        onError={setError}
+      />}
+      {tab === 'events' && <EventsPanel
+        items={events}
+        status={calendarStatus}
+        setItems={setEvents}
+        setStatus={setCalendarStatus}
+        onError={setError}
+      />}
       {tab === 'files' && <FilesPage onError={setError} />}
-      {tab === 'settings' && household && <Settings household={household} setHousehold={setHousehold} activity={activity} onError={setError} />}
+      {tab === 'settings' && household && <Settings
+        household={household}
+        setHousehold={setHousehold}
+        activity={activity}
+        onError={setError}
+      />}
     </main>
-    <nav className="bottom-nav" aria-label="ניווט ראשי"><NavButton active={tab === 'home'} icon="⌂" label="בית" onClick={() => navigate('home')} /><NavButton active={tab === 'shopping'} icon="🛒" label="קניות" count={shopping.length} onClick={() => navigate('shopping')} /><NavButton active={tab === 'tasks'} icon="✓" label="עבודה" count={tasks.filter(item => !['completed', 'cancelled'].includes(item.status)).length} onClick={() => navigate('tasks')} /><NavButton active={tab === 'events'} icon="◷" label="אירועים" onClick={() => navigate('events')} /><NavButton active={tab === 'files'} icon="📁" label="קבצים" onClick={() => navigate('files')} /><NavButton active={tab === 'settings'} icon="⚙" label="עוד" onClick={() => navigate('settings')} /></nav>
+
+    <nav className="bottom-nav" aria-label="ניווט ראשי">
+      <NavButton active={tab === 'home'} icon="⌂" label="בית" onClick={() => navigate('home')} />
+      <NavButton active={tab === 'shopping'} icon="🛒" label="קניות" count={shopping.length} onClick={() => navigate('shopping')} />
+      <NavButton
+        active={tab === 'tasks'}
+        icon="✓"
+        label="עבודה"
+        count={tasks.filter(item => !['completed', 'cancelled'].includes(item.status)).length}
+        onClick={() => navigate('tasks')}
+      />
+      <NavButton active={tab === 'events'} icon="◷" label="אירועים" onClick={() => navigate('events')} />
+      <NavButton active={tab === 'files'} icon="📁" label="קבצים" onClick={() => navigate('files')} />
+      <NavButton active={tab === 'settings'} icon="⚙" label="עוד" onClick={() => navigate('settings')} />
+    </nav>
   </div>
 }
 
-function Loading() { return <div className="loading-screen"><div className="brand-mark">🏠</div><div className="skeleton wide"/><div className="skeleton"/><div className="skeleton"/></div> }
-function FatalError({ message }: { message: string }) { return <div className="fatal"><div className="brand-mark">🏠</div><h1>לא הצלחנו לפתוח את הבית</h1><p>{message}</p></div> }
-function NavButton({ active, icon, label, count, onClick }: { active: boolean; icon: string; label: string; count?: number; onClick: () => void }) { return <button className={active ? 'nav-button active' : 'nav-button'} onClick={onClick}><span>{icon}{count ? <b className="nav-badge">{count}</b> : null}</span><small>{label}</small></button> }
-function Home({ dashboard, onNavigate }: { dashboard: Dashboard; onNavigate: (tab: Tab) => void }) { const greeting = new Date().getHours() < 12 ? 'בוקר טוב' : new Date().getHours() < 18 ? 'צהריים טובים' : 'ערב טוב'; const urgent = dashboard.todos.filter(item => item.priority === 'high' && !['completed', 'cancelled'].includes(item.status)).length; const blocked = dashboard.todos.filter(item => item.blocked).length; return <section className="page home-page"><div className="hero-card"><span className="eyebrow">{greeting}</span><h2>מה צריך לקדם היום?</h2><p>{dashboard.counts.projects || 0} פרויקטים, {dashboard.counts.todos} משימות ו־{dashboard.counts.events} אירועים ביומן.</p><div className="hero-actions"><button onClick={() => onNavigate('tasks')}>＋ משימה או פרויקט</button><button onClick={() => onNavigate('events')}>＋ אירוע</button></div></div><div className="metric-grid"><button className="metric" onClick={() => onNavigate('tasks')}><strong>{dashboard.counts.projects || 0}</strong><span>פרויקטים פעילים</span></button><button className="metric" onClick={() => onNavigate('tasks')}><strong>{dashboard.counts.todos}</strong><span>משימות פתוחות</span></button><button className="metric" onClick={() => onNavigate('events')}><strong>{dashboard.counts.events}</strong><span>אירועים</span></button></div>{(urgent > 0 || blocked > 0) && <div className="attention-card"><span>⚡</span><div><strong>{urgent} דחופות · {blocked} חסומות</strong><small>כדאי לבחור את הצעד הבא.</small></div><button onClick={() => onNavigate('tasks')}>הצג</button></div>}<Section title="פרויקטים בתנועה" action="כל העבודה" onAction={() => onNavigate('tasks')}>{dashboard.projects?.length ? dashboard.projects.slice(0, 3).map(project => <div className="timeline-row" key={project.id}><div className="timeline-dot"/><div><strong>{project.name}</strong><small>{project.progress}% · {project.task_count} משימות</small></div></div>) : <Empty text="אין פרויקטים פעילים"/>}</Section><Section title="בקרוב" action="כל האירועים" onAction={() => onNavigate('events')}>{dashboard.events.length ? dashboard.events.slice(0, 3).map(event => <div className="timeline-row" key={event.id}><div className="timeline-dot"/><div><strong>{event.title}</strong><small>{dateText(event.start_at)}–{new Date(event.end_at).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}</small></div></div>) : <Empty text="אין אירועים קרובים"/>}</Section><Section title="שינויים אחרונים">{dashboard.activity.length ? dashboard.activity.slice(0, 5).map(item => <ActivityRow key={item.id} item={item}/>) : <Empty text="כאן יופיעו עדכונים מבני הבית"/>}</Section></section> }
-function Shopping({ items, setItems, onError }: { items: ShoppingItem[]; setItems: (value: ShoppingItem[]) => void; onError: (value: string) => void }) { const [value, setValue] = useState(''); const [qty, setQty] = useState('1'); const [category, setCategory] = useState(''); const [query, setQuery] = useState(''); const filtered = items.filter(item => `${item.item} ${item.category}`.toLowerCase().includes(query.toLowerCase())); const grouped = useMemo(() => Object.entries(filtered.reduce<Record<string, ShoppingItem[]>>((result, item) => { const key = item.category || 'כללי'; (result[key] ||= []).push(item); return result }, {})), [filtered]); const add = async (event: FormEvent) => { event.preventDefault(); if (!value.trim()) return; try { const item = await api.addShopping(value.trim(), qty, category.trim()); setItems([item, ...items]); setValue(''); setQty('1'); setCategory(''); hapticSuccess() } catch (caught) { onError(String(caught)) } }; const done = async (item: ShoppingItem) => { const before = items; setItems(items.filter(row => row.id !== item.id)); try { await api.updateShopping(item.id, { done: 1 }); hapticSuccess() } catch (caught) { setItems(before); onError(String(caught)) } }; const remove = async (item: ShoppingItem) => { if (!confirm(`למחוק את ${item.item}?`)) return; const before = items; setItems(items.filter(row => row.id !== item.id)); try { await api.deleteShopping(item.id) } catch (caught) { setItems(before); onError(String(caught)) } }; return <section className="page"><div className="page-title"><div><h2>רשימת קניות</h2><p>{items.length} פריטים פתוחים</p></div></div><form className="stack-form" onSubmit={add}><input value={value} onChange={event => setValue(event.target.value)} placeholder="מה חסר בבית?"/><div className="form-row"><input value={qty} onChange={event => setQty(event.target.value)} placeholder="כמות"/><input value={category} onChange={event => setCategory(event.target.value)} placeholder="קטגוריה"/></div><button className="primary-button">הוספה לרשימה</button></form><input className="search-input" value={query} onChange={event => setQuery(event.target.value)} placeholder="חיפוש ברשימה…"/>{grouped.length ? grouped.map(([group, rows]) => <Section key={group} title={group}>{rows.map(item => <div className="manage-row" key={item.id}><button className="row-main" onClick={() => done(item)}><span className="check-circle"/><span><strong>{item.item}</strong><small>כמות: {item.qty}</small></span></button><button className="danger-icon" onClick={() => remove(item)}>×</button></div>)}</Section>) : <Empty text="לא נמצאו פריטים"/>}</section> }
-function Settings({ household, setHousehold, activity, onError }: { household: Household; setHousehold: (value: Household) => void; activity: Activity[]; onError: (value: string) => void }) { const [name, setName] = useState(household.name); const save = async (event: FormEvent) => { event.preventDefault(); try { const updated = await api.updateHousehold({ name }); setHousehold(updated); hapticSuccess() } catch (caught) { onError(String(caught)) } }; return <section className="page"><div className="page-title"><div><h2>הבית</h2><p>הגדרות, פרטיות ופעילות</p></div></div><Section title="זהות הבית"><form className="settings-form" onSubmit={save}><label>שם הבית<input value={name} onChange={event => setName(event.target.value)}/></label><label>אזור זמן<input value={household.timezone} disabled/></label><button className="primary-button">שמירת שינויים</button></form></Section><Section title="זיכרון ופרטיות"><MemoryPanel onError={onError}/></Section><Section title="פעילות אחרונה">{activity.slice(0, 12).map(item => <ActivityRow key={item.id} item={item}/>)}</Section><div className="privacy-note"><strong>פרטי כברירת מחדל</strong><p>זהות המשתמשים מגיעה מ־Telegram בלבד. חשבון Google הייעודי של הבוט מחזיק את היומן והקבצים.</p></div></section> }
-function Section({ title, action, onAction, children }: { title: string; action?: string; onAction?: () => void; children: React.ReactNode }) { return <section className="content-section"><div className="section-heading"><h3>{title}</h3>{action && <button onClick={onAction}>{action}</button>}</div><div className="section-body">{children}</div></section> }
-function Empty({ text }: { text: string }) { return <div className="empty-state"><span>◇</span><p>{text}</p></div> }
-function ActivityRow({ item }: { item: Activity }) { return <div className="activity-row"><span className="activity-icon">{item.entity_type === 'shopping' ? '🛒' : item.entity_type === 'todo' ? '✓' : item.entity_type === 'project' ? '📁' : item.entity_type === 'event' ? '◷' : item.entity_type === 'memory' ? '🧠' : '•'}</span><div><strong>{item.summary}</strong><small>{item.actor_name || 'הבית'} · {new Intl.DateTimeFormat('he-IL', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' }).format(new Date(item.created_at * 1000))}</small></div></div> }
+function Loading() {
+  return <div className="loading-screen">
+    <div className="brand-mark">🏠</div>
+    <div className="skeleton wide"/>
+    <div className="skeleton"/>
+    <div className="skeleton"/>
+  </div>
+}
+
+function FatalError({ message }: { message: string }) {
+  return <div className="fatal">
+    <div className="brand-mark">🏠</div>
+    <h1>לא הצלחנו לפתוח את הבית</h1>
+    <p>{message}</p>
+  </div>
+}
+
+function NavButton({ active, icon, label, count, onClick }: {
+  active: boolean
+  icon: string
+  label: string
+  count?: number
+  onClick: () => void
+}) {
+  return <button className={active ? 'nav-button active' : 'nav-button'} onClick={onClick}>
+    <span>{icon}{count ? <b className="nav-badge">{count}</b> : null}</span>
+    <small>{label}</small>
+  </button>
+}
+
+function Home({ dashboard, inboxAttention, onNavigate }: {
+  dashboard: Dashboard
+  inboxAttention: number
+  onNavigate: (tab: Tab) => void
+}) {
+  const greeting = new Date().getHours() < 12
+    ? 'בוקר טוב'
+    : new Date().getHours() < 18 ? 'צהריים טובים' : 'ערב טוב'
+  const urgent = dashboard.todos.filter(
+    item => item.priority === 'high' && !['completed', 'cancelled'].includes(item.status)
+  ).length
+  const blocked = dashboard.todos.filter(item => item.blocked).length
+
+  return <section className="page home-page">
+    <div className="hero-card">
+      <span className="eyebrow">{greeting}</span>
+      <h2>מה צריך לקדם היום?</h2>
+      <p>{dashboard.counts.projects || 0} פרויקטים, {dashboard.counts.todos} משימות ו־{dashboard.counts.events} אירועים ביומן.</p>
+      <div className="hero-actions">
+        <button onClick={() => onNavigate('tasks')}>＋ משימה או פרויקט</button>
+        <button onClick={() => onNavigate('events')}>＋ אירוע</button>
+      </div>
+    </div>
+
+    {inboxAttention > 0 && <div className="attention-card">
+      <span>📥</span>
+      <div>
+        <strong>{inboxAttention} פעולות דורשות החלטה</strong>
+        <small>אישור, ניסיון חוזר או בדיקה ידנית.</small>
+      </div>
+      <button onClick={() => onNavigate('inbox')}>פתח Inbox</button>
+    </div>}
+
+    <div className="metric-grid">
+      <button className="metric" onClick={() => onNavigate('tasks')}>
+        <strong>{dashboard.counts.projects || 0}</strong><span>פרויקטים פעילים</span>
+      </button>
+      <button className="metric" onClick={() => onNavigate('tasks')}>
+        <strong>{dashboard.counts.todos}</strong><span>משימות פתוחות</span>
+      </button>
+      <button className="metric" onClick={() => onNavigate('events')}>
+        <strong>{dashboard.counts.events}</strong><span>אירועים</span>
+      </button>
+    </div>
+
+    {(urgent > 0 || blocked > 0) && <div className="attention-card">
+      <span>⚡</span>
+      <div>
+        <strong>{urgent} דחופות · {blocked} חסומות</strong>
+        <small>כדאי לבחור את הצעד הבא.</small>
+      </div>
+      <button onClick={() => onNavigate('tasks')}>הצג</button>
+    </div>}
+
+    <Section title="פרויקטים בתנועה" action="כל העבודה" onAction={() => onNavigate('tasks')}>
+      {dashboard.projects?.length
+        ? dashboard.projects.slice(0, 3).map(project => <div className="timeline-row" key={project.id}>
+          <div className="timeline-dot"/>
+          <div><strong>{project.name}</strong><small>{project.progress}% · {project.task_count} משימות</small></div>
+        </div>)
+        : <Empty text="אין פרויקטים פעילים"/>}
+    </Section>
+
+    <Section title="בקרוב" action="כל האירועים" onAction={() => onNavigate('events')}>
+      {dashboard.events.length
+        ? dashboard.events.slice(0, 3).map(event => <div className="timeline-row" key={event.id}>
+          <div className="timeline-dot"/>
+          <div>
+            <strong>{event.title}</strong>
+            <small>{dateText(event.start_at)}–{new Date(event.end_at).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}</small>
+          </div>
+        </div>)
+        : <Empty text="אין אירועים קרובים"/>}
+    </Section>
+
+    <Section title="שינויים אחרונים">
+      {dashboard.activity.length
+        ? dashboard.activity.slice(0, 5).map(item => <ActivityRow key={item.id} item={item}/>)
+        : <Empty text="כאן יופיעו עדכונים מבני הבית"/>}
+    </Section>
+  </section>
+}
+
+function Shopping({ items, setItems, onError }: {
+  items: ShoppingItem[]
+  setItems: (value: ShoppingItem[]) => void
+  onError: (value: string) => void
+}) {
+  const [value, setValue] = useState('')
+  const [qty, setQty] = useState('1')
+  const [category, setCategory] = useState('')
+  const [query, setQuery] = useState('')
+  const filtered = items.filter(item => `${item.item} ${item.category}`.toLowerCase().includes(query.toLowerCase()))
+  const grouped = useMemo(
+    () => Object.entries(filtered.reduce<Record<string, ShoppingItem[]>>((result, item) => {
+      const key = item.category || 'כללי'
+      ;(result[key] ||= []).push(item)
+      return result
+    }, {})),
+    [filtered],
+  )
+
+  const add = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!value.trim()) return
+    try {
+      const item = await api.addShopping(value.trim(), qty, category.trim())
+      setItems([item, ...items])
+      setValue('')
+      setQty('1')
+      setCategory('')
+      hapticSuccess()
+    } catch (caught) {
+      onError(String(caught))
+    }
+  }
+
+  const done = async (item: ShoppingItem) => {
+    const before = items
+    setItems(items.filter(row => row.id !== item.id))
+    try {
+      await api.updateShopping(item.id, { done: 1 })
+      hapticSuccess()
+    } catch (caught) {
+      setItems(before)
+      onError(String(caught))
+    }
+  }
+
+  const remove = async (item: ShoppingItem) => {
+    if (!confirm(`למחוק את ${item.item}?`)) return
+    const before = items
+    setItems(items.filter(row => row.id !== item.id))
+    try {
+      await api.deleteShopping(item.id)
+    } catch (caught) {
+      setItems(before)
+      onError(String(caught))
+    }
+  }
+
+  return <section className="page">
+    <div className="page-title"><div><h2>רשימת קניות</h2><p>{items.length} פריטים פתוחים</p></div></div>
+    <form className="stack-form" onSubmit={add}>
+      <input value={value} onChange={event => setValue(event.target.value)} placeholder="מה חסר בבית?"/>
+      <div className="form-row">
+        <input value={qty} onChange={event => setQty(event.target.value)} placeholder="כמות"/>
+        <input value={category} onChange={event => setCategory(event.target.value)} placeholder="קטגוריה"/>
+      </div>
+      <button className="primary-button">הוספה לרשימה</button>
+    </form>
+    <input className="search-input" value={query} onChange={event => setQuery(event.target.value)} placeholder="חיפוש ברשימה…"/>
+    {grouped.length
+      ? grouped.map(([group, rows]) => <Section key={group} title={group}>
+        {rows.map(item => <div className="manage-row" key={item.id}>
+          <button className="row-main" onClick={() => done(item)}>
+            <span className="check-circle"/>
+            <span><strong>{item.item}</strong><small>כמות: {item.qty}</small></span>
+          </button>
+          <button className="danger-icon" onClick={() => remove(item)}>×</button>
+        </div>)}
+      </Section>)
+      : <Empty text="לא נמצאו פריטים"/>}
+  </section>
+}
+
+function Settings({ household, setHousehold, activity, onError }: {
+  household: Household
+  setHousehold: (value: Household) => void
+  activity: Activity[]
+  onError: (value: string) => void
+}) {
+  const [name, setName] = useState(household.name)
+  const save = async (event: FormEvent) => {
+    event.preventDefault()
+    try {
+      const updated = await api.updateHousehold({ name })
+      setHousehold(updated)
+      hapticSuccess()
+    } catch (caught) {
+      onError(String(caught))
+    }
+  }
+
+  return <section className="page">
+    <div className="page-title"><div><h2>הבית</h2><p>הגדרות, פרטיות ופעילות</p></div></div>
+    <Section title="זהות הבית">
+      <form className="settings-form" onSubmit={save}>
+        <label>שם הבית<input value={name} onChange={event => setName(event.target.value)}/></label>
+        <label>אזור זמן<input value={household.timezone} disabled/></label>
+        <button className="primary-button">שמירת שינויים</button>
+      </form>
+    </Section>
+    <Section title="זיכרון ופרטיות"><MemoryPanel onError={onError}/></Section>
+    <Section title="פעילות אחרונה">{activity.slice(0, 12).map(item => <ActivityRow key={item.id} item={item}/>)}</Section>
+    <div className="privacy-note">
+      <strong>פרטי כברירת מחדל</strong>
+      <p>זהות המשתמשים מגיעה מ־Telegram בלבד. חשבון Google הייעודי של הבוט מחזיק את היומן והקבצים.</p>
+    </div>
+  </section>
+}
+
+function Section({ title, action, onAction, children }: {
+  title: string
+  action?: string
+  onAction?: () => void
+  children: React.ReactNode
+}) {
+  return <section className="content-section">
+    <div className="section-heading">
+      <h3>{title}</h3>
+      {action && <button onClick={onAction}>{action}</button>}
+    </div>
+    <div className="section-body">{children}</div>
+  </section>
+}
+
+function Empty({ text }: { text: string }) {
+  return <div className="empty-state"><span>◇</span><p>{text}</p></div>
+}
+
+function ActivityRow({ item }: { item: Activity }) {
+  return <div className="activity-row">
+    <span className="activity-icon">
+      {item.entity_type === 'shopping' ? '🛒'
+        : item.entity_type === 'todo' ? '✓'
+        : item.entity_type === 'project' ? '📁'
+        : item.entity_type === 'event' ? '◷'
+        : item.entity_type === 'memory' ? '🧠'
+        : item.entity_type === 'inbox' ? '📥'
+        : '•'}
+    </span>
+    <div>
+      <strong>{item.summary}</strong>
+      <small>{item.actor_name || 'הבית'} · {new Intl.DateTimeFormat('he-IL', {
+        hour: '2-digit',
+        minute: '2-digit',
+        day: 'numeric',
+        month: 'short',
+      }).format(new Date(item.created_at * 1000))}</small>
+    </div>
+  </div>
+}
+
 export default App
