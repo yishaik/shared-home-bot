@@ -212,6 +212,8 @@ class CalendarService:
         token = state.get("sync_token") or ""
         if not token:
             return await self.full_sync()
+
+        reset_required = False
         async with self._sync_lock:
             try:
                 result = await asyncio.to_thread(
@@ -231,9 +233,15 @@ class CalendarService:
             except Exception as exc:
                 if getattr(exc, "resp", None) is not None and getattr(exc.resp, "status", None) == 410:
                     await self._set_sync_state(sync_token="")
-                    return await self.full_sync()
-                await self._set_sync_state(last_error=f"{type(exc).__name__}: {exc}")
-                raise
+                    reset_required = True
+                else:
+                    await self._set_sync_state(last_error=f"{type(exc).__name__}: {exc}")
+                    raise
+
+        # Run outside the incremental lock; full_sync acquires the same lock.
+        if reset_required:
+            return await self.full_sync()
+        raise RuntimeError("incremental sync ended without a result")
 
     async def list_events(self, *, include_cancelled: bool = False) -> list[dict[str, Any]]:
         await self.ensure_schema()

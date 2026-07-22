@@ -7,6 +7,7 @@ from app.calendar_service import CalendarService
 from app.store_v2 import Store
 from app.services import HomeService
 from app.google_tools import GOOGLE_TOOL_SPECS, GOOGLE_TOOL_NAMES, run_google_tool
+from app import proactive
 
 
 def _tool(name: str, description: str, properties: dict, required: list[str] | None = None) -> dict:
@@ -53,6 +54,13 @@ TOOL_SPECS: list[dict[str, Any]] = [
     _tool("setting_get", "Get one household preference or list all.", {"key": {"type": "string"}}),
     _tool("core_memory_append", "Append a lasting essential to Core memory. Keep it short.", {"text": {"type": "string"}}, ["text"]),
     _tool("core_memory_replace", "Fix or prune Core memory by replacing an exact substring.", {"find": {"type": "string"}, "replace": {"type": "string", "default": ""}}, ["find"]),
+    _tool("remind_add", "Schedule a proactive reminder the bot will send at the given time. Use ISO 8601 in the household timezone (Asia/Jerusalem). recurrence: '' (once), 'daily' or 'weekly'.", {
+        "text": {"type": "string"}, "due_at": {"type": "string"},
+        "target": {"type": "string", "enum": ["me", "all"], "default": "all"},
+        "recurrence": {"type": "string", "enum": ["", "daily", "weekly"], "default": ""},
+    }, ["text", "due_at"]),
+    _tool("remind_list", "List pending scheduled reminders.", {}),
+    _tool("remind_cancel", "Cancel a pending reminder by id.", {"id": {"type": "integer"}}, ["id"]),
 ]
 
 
@@ -157,6 +165,19 @@ async def run_tool(store: Store, service: HomeService, name: str, arguments: dic
             if arguments.get("key"):
                 return json.dumps({"ok": True, "key": arguments["key"], "value": await store.get_setting(arguments["key"])}, ensure_ascii=False)
             return json.dumps({"ok": True, "settings": await store.list_settings()}, ensure_ascii=False)
+        if name == "remind_add":
+            target_user = actor if arguments.get("target") == "me" else None
+            item = await proactive.reminder_add(
+                store, settings, text=arguments["text"], due_at=arguments["due_at"],
+                created_by=actor, target_user_id=target_user, recurrence=arguments.get("recurrence") or "",
+            )
+            await store.add_activity(user_id, "created", "reminder", str(item["id"]), f"נקבעה תזכורת: {item['text']}")
+            return json.dumps({"ok": True, "reminder": item}, ensure_ascii=False)
+        if name == "remind_list":
+            return json.dumps({"ok": True, "reminders": await proactive.reminder_list(store, settings)}, ensure_ascii=False)
+        if name == "remind_cancel":
+            ok = await proactive.reminder_cancel(store, int(arguments["id"]))
+            return json.dumps({"ok": ok, "cancelled": arguments["id"]}, ensure_ascii=False)
         if name == "core_memory_append":
             return json.dumps({"ok": True, "core_memory": await store.append_core_memory(arguments["text"])}, ensure_ascii=False)
         if name == "core_memory_replace":
