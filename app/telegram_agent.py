@@ -75,17 +75,17 @@ class TelegramAgentRuntime:
         """Preserve the existing self-maintaining shared-memory lifecycle."""
         if self._closing or not await auto_memory_enabled(self.store):
             return
-        try:
-            count = int(await self.store.get_setting("_msgs_since_reflect", "0") or 0) + 1
-        except ValueError:
-            count = 1
-        if count < every:
-            await self.store.set_setting("_msgs_since_reflect", str(count))
-            return
-
         async with self._reflection_lock:
             if self._closing or not await auto_memory_enabled(self.store):
                 return
+            try:
+                count = int(await self.store.get_setting("_msgs_since_reflect", "0") or 0) + 1
+            except ValueError:
+                count = 1
+            if count < every:
+                await self.store.set_setting("_msgs_since_reflect", str(count))
+                return
+
             reflector = getattr(self.store, "reflector", None)
             if not reflector:
                 return
