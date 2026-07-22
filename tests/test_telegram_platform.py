@@ -65,3 +65,20 @@ def test_envelope_scope_is_topic_isolated() -> None:
     )
 
     assert envelope.scope_key == "telegram:-100:99"
+
+
+def test_direct_message_topic_is_used_when_thread_id_is_absent() -> None:
+    envelope = TelegramEnvelope(
+        update_id=1,
+        chat_id=42,
+        chat_type="private",
+        user_id=10,
+        username=None,
+        display_name="User",
+        message_id=20,
+        text="hello",
+        direct_messages_topic_id=77,
+    )
+
+    assert envelope.topic_id == 77
+    assert envelope.scope_key == "telegram:42:77"
