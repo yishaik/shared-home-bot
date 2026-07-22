@@ -36,7 +36,7 @@ export const api = {
   updateProject: (id: number, patch: Partial<ProjectPayload>) => request<Project>(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteProject: (id: number) => request<void>(`/api/projects/${id}`, { method: 'DELETE' }),
   createProjectFolder: (id: number) => request<{ id: string; url: string }>(`/api/projects/${id}/drive-folder`, { method: 'POST' }),
-  tasks: (includeDone = false, projectId?: number) => { const params = new URLSearchParams({ include_done: String(includeDone) }); if (projectId) params.set('project_id', String(projectId)); return request<Todo[]>(`/api/tasks?${params}`) },
+  tasks: (includeDone = true, projectId?: number) => { const params = new URLSearchParams({ include_done: String(includeDone) }); if (projectId) params.set('project_id', String(projectId)); return request<Todo[]>(`/api/tasks?${params}`) },
   task: (id: number) => request<Todo>(`/api/tasks/${id}`),
   addTask: (payload: TaskPayload) => request<Todo>('/api/tasks', { method: 'POST', body: JSON.stringify(payload) }),
   updateTask: (id: number, patch: Partial<TaskPayload> & { done?: boolean }) => request<Todo>(`/api/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
