@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     google_refresh_token: str = Field(default="", alias="GOOGLE_REFRESH_TOKEN")
     google_calendar_id: str = Field(default="primary", alias="GOOGLE_CALENDAR_ID")
     google_docs_folder_id: str = Field(default="", alias="GOOGLE_DOCS_FOLDER_ID")
+    google_drive_folder_id: str = Field(default="", alias="GOOGLE_DRIVE_FOLDER_ID")
+    google_drive_folder_name: str = Field(default="Shared Home", alias="GOOGLE_DRIVE_FOLDER_NAME")
+    google_drive_shared_emails: list[str] = Field(default_factory=list, alias="GOOGLE_DRIVE_SHARED_EMAILS")
+    google_drive_max_upload_mb: int = Field(default=25, ge=1, le=100, alias="GOOGLE_DRIVE_MAX_UPLOAD_MB")
     google_oauth_setup_secret: str = Field(default="", alias="GOOGLE_OAUTH_SETUP_SECRET")
 
     @field_validator("allowed_user_ids", mode="before")
@@ -54,6 +58,14 @@ class Settings(BaseSettings):
         if isinstance(value, list):
             return [int(x) for x in value]
         return [int(x.strip()) for x in str(value).split(",") if x.strip()]
+
+    @field_validator("google_drive_shared_emails", mode="before")
+    @classmethod
+    def parse_emails(cls, value):
+        if value is None or value == "":
+            return []
+        values = value if isinstance(value, list) else str(value).split(",")
+        return sorted({str(item).strip().lower() for item in values if str(item).strip()})
 
     @property
     def resolved_public_url(self) -> str:
