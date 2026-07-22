@@ -142,6 +142,12 @@ async def cmd_chatid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _authorized(update, context):
         return
+    envelope = _platform(context).envelope(update)
+    if not envelope or not _platform(context).private_context_allowed(envelope):
+        await update.effective_message.reply_text(
+            "זיכרון פרטי אינו זמין בקבוצה הזו. אפשר להשתמש בפקודה בשיחה פרטית עם הבוט."
+        )
+        return
     settings: Settings = context.application.bot_data["settings"]
     store: Store = context.application.bot_data["store"]
     rows = await store.list_memories(limit=20)
