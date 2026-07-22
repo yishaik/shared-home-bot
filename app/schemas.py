@@ -47,3 +47,16 @@ class EventCreate(BaseModel):
 class HouseholdUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     timezone: str | None = Field(default=None, min_length=1, max_length=80)
+
+
+class MemoryUpdate(BaseModel):
+    value: str = Field(min_length=1, max_length=4000)
+    category: str = Field(default="general", min_length=1, max_length=80)
+
+
+class MemorySettingsUpdate(BaseModel):
+    auto_memory_enabled: bool
+
+
+class CoreMemoryUpdate(BaseModel):
+    value: str = Field(default="", max_length=8000)
