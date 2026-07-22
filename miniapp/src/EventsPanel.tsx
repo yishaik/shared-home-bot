@@ -60,6 +60,7 @@ const durationText = (event: HomeEvent) => {
 
 export function EventsPanel({ items, status, setItems, setStatus, onError }: Props) {
   const [editing, setEditing] = useState<HomeEvent | null>(null)
+  const [eventFormOpen, setEventFormOpen] = useState(false)
   const [title, setTitle] = useState('')
   const [start, setStart] = useState('')
   const [end, setEnd] = useState('')
@@ -112,6 +113,7 @@ export function EventsPanel({ items, status, setItems, setStatus, onError }: Pro
       })
       setItems([...items, created])
       reset()
+      setEventFormOpen(false)
       hapticSuccess()
     } catch (error) { onError(String(error)) }
   }
@@ -141,23 +143,26 @@ export function EventsPanel({ items, status, setItems, setStatus, onError }: Pro
       <span>{status?.configured ? 'Google מחובר' : 'Google לא מחובר'}</span>
       <small>{status?.last_error || (status?.last_incremental_sync_at ? `סונכרן ${new Date(status.last_incremental_sync_at * 1000).toLocaleString('he-IL')}` : 'ממתין לסנכרון ראשון')}</small>
     </div>
-    <form className="stack-form" onSubmit={create}>
-      <input value={title} onChange={event => setTitle(event.target.value)} placeholder="שם האירוע" />
-      <label className="check-label"><input type="checkbox" checked={allDay} onChange={event => { setAllDay(event.target.checked); setStart(''); setEnd('') }} /> אירוע לכל היום</label>
-      <div className="field-labels"><span>התחלה</span><span>סיום</span></div>
-      <div className="form-row">
-        <input type={allDay ? 'date' : 'datetime-local'} value={start} onChange={event => changeStart(event.target.value)} />
-        <input type={allDay ? 'date' : 'datetime-local'} value={end} min={start} onChange={event => setEnd(event.target.value)} />
-      </div>
-      <input value={location} onChange={event => setLocation(event.target.value)} placeholder="מיקום, לא חובה" />
-      <textarea value={description} onChange={event => setDescription(event.target.value)} placeholder="תיאור או הערות" />
-      <input value={attendees} onChange={event => setAttendees(event.target.value)} placeholder="אימיילים להזמנה, מופרדים בפסיק" />
-      <div className="form-row">
-        <select value={recurrence} onChange={event => setRecurrence(event.target.value)}><option value="">ללא חזרה</option><option value="FREQ=WEEKLY">כל שבוע</option><option value="FREQ=MONTHLY">כל חודש</option><option value="FREQ=DAILY">כל יום</option></select>
-        <select value={reminder} onChange={event => setReminder(event.target.value)}><option value="10">תזכורת 10 דקות לפני</option><option value="30">30 דקות לפני</option><option value="60">שעה לפני</option><option value="1440">יום לפני</option><option value="default">ברירת המחדל של Google</option></select>
-      </div>
-      <button className="primary-button">הוספה ל־Google Calendar</button>
-    </form>
+    <details className="content-section" open={eventFormOpen} onToggle={event => setEventFormOpen(event.currentTarget.open)}>
+      <summary style={{ cursor: 'pointer', fontWeight: 800 }}>＋ יצירת אירוע חדש</summary>
+      <form className="stack-form" style={{ marginTop: 12, boxShadow: 'none', padding: 0 }} onSubmit={create}>
+        <input value={title} onChange={event => setTitle(event.target.value)} placeholder="שם האירוע" />
+        <label className="check-label"><input type="checkbox" checked={allDay} onChange={event => { setAllDay(event.target.checked); setStart(''); setEnd('') }} /> אירוע לכל היום</label>
+        <div className="field-labels"><span>התחלה</span><span>סיום</span></div>
+        <div className="form-row">
+          <input type={allDay ? 'date' : 'datetime-local'} value={start} onChange={event => changeStart(event.target.value)} />
+          <input type={allDay ? 'date' : 'datetime-local'} value={end} min={start} onChange={event => setEnd(event.target.value)} />
+        </div>
+        <input value={location} onChange={event => setLocation(event.target.value)} placeholder="מיקום, לא חובה" />
+        <textarea value={description} onChange={event => setDescription(event.target.value)} placeholder="תיאור או הערות" />
+        <input value={attendees} onChange={event => setAttendees(event.target.value)} placeholder="אימיילים להזמנה, מופרדים בפסיק" />
+        <div className="form-row">
+          <select value={recurrence} onChange={event => setRecurrence(event.target.value)}><option value="">ללא חזרה</option><option value="FREQ=WEEKLY">כל שבוע</option><option value="FREQ=MONTHLY">כל חודש</option><option value="FREQ=DAILY">כל יום</option></select>
+          <select value={reminder} onChange={event => setReminder(event.target.value)}><option value="10">תזכורת 10 דקות לפני</option><option value="30">30 דקות לפני</option><option value="60">שעה לפני</option><option value="1440">יום לפני</option><option value="default">ברירת המחדל של Google</option></select>
+        </div>
+        <button className="primary-button">הוספה ל־Google Calendar</button>
+      </form>
+    </details>
 
     {Object.entries(groups).map(([date, events]) => <section className="content-section" key={date}><div className="section-heading"><h3>{new Date(`${date}T12:00:00`).toLocaleDateString('he-IL', { weekday: 'long', day: 'numeric', month: 'long' })}</h3></div><div className="section-body">
       {events.map(event => <button className="agenda-event" key={event.id} onClick={() => setEditing({ ...event })}>
