@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     telegram_inline_enabled: bool = Field(default=True, alias="TELEGRAM_INLINE_ENABLED")
     telegram_inline_max_results: int = Field(default=20, alias="TELEGRAM_INLINE_MAX_RESULTS")
     telegram_inline_cache_seconds: int = Field(default=3, alias="TELEGRAM_INLINE_CACHE_SECONDS")
+    telegram_inline_usage_retention_days: int = Field(default=30, alias="TELEGRAM_INLINE_USAGE_RETENTION_DAYS")
 
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-4o", alias="OPENAI_MODEL")
@@ -109,6 +110,11 @@ class Settings(BaseSettings):
     @classmethod
     def validate_inline_cache_seconds(cls, value: int) -> int:
         return max(0, min(int(value), 300))
+
+    @field_validator("telegram_inline_usage_retention_days")
+    @classmethod
+    def validate_inline_usage_retention_days(cls, value: int) -> int:
+        return max(1, min(int(value), 365))
 
     @property
     def resolved_public_url(self) -> str:
