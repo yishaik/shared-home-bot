@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -39,9 +41,26 @@ class EventCreate(BaseModel):
     title: str = Field(min_length=1, max_length=240)
     start_at: str
     end_at: str | None = None
-    location: str = Field(default="", max_length=240)
-    notes: str = Field(default="", max_length=2000)
+    location: str = Field(default="", max_length=500)
+    description: str = Field(default="", max_length=8000)
+    notes: str = Field(default="", max_length=8000)
     all_day: bool = False
+    attendees: list[str] = Field(default_factory=list, max_length=50)
+    recurrence: list[str] = Field(default_factory=list, max_length=10)
+    reminders: dict[str, Any] | None = None
+
+
+class EventUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=240)
+    start_at: str | None = None
+    end_at: str | None = None
+    location: str | None = Field(default=None, max_length=500)
+    description: str | None = Field(default=None, max_length=8000)
+    notes: str | None = Field(default=None, max_length=8000)
+    all_day: bool | None = None
+    attendees: list[str] | None = Field(default=None, max_length=50)
+    recurrence: list[str] | None = Field(default=None, max_length=10)
+    reminders: dict[str, Any] | None = None
 
 
 class HouseholdUpdate(BaseModel):
