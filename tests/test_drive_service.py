@@ -8,7 +8,7 @@ from app.drive_service import DriveService, _item_payload, _safe_name
 
 def test_safe_name_removes_client_paths() -> None:
     assert _safe_name("../../contracts/home.pdf") == "home.pdf"
-    assert _safe_name(r"C:\fakepath\photo.jpg") == r"C:\fakepath\photo.jpg"
+    assert _safe_name(r"C:\fakepath\photo.jpg") == "photo.jpg"
 
 
 def test_safe_name_rejects_empty_values() -> None:
