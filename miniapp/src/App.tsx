@@ -10,6 +10,7 @@ import type { Activity, CalendarStatus, Dashboard, HomeEvent, Household, Project
 type Tab = 'home' | 'shopping' | 'tasks' | 'events' | 'files' | 'settings'
 const tabFromUrl = (): Tab => { const value = new URLSearchParams(location.search).get('tab'); return ['shopping', 'tasks', 'events', 'files', 'settings'].includes(value || '') ? value as Tab : 'home' }
 const dateText = (value?: string | null) => { if (!value) return 'ללא תאריך'; const date = new Date(value); return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat('he-IL', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }).format(date) }
+const errorText = (caught: unknown) => caught instanceof Error ? caught.message : String(caught)
 
 function App() {
   const [tab, setTab] = useState<Tab>(tabFromUrl())
@@ -27,18 +28,54 @@ function App() {
   const [refreshing, setRefreshing] = useState(false)
   const [lastSync, setLastSync] = useState<Date | null>(null)
 
+  const refreshTasks = useCallback(async () => {
+    const taskRows = await api.tasks()
+    setTasks(taskRows)
+    setLastSync(new Date())
+  }, [])
+
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setRefreshing(true)
     try {
-      const [home, shop, taskRows, projectRows, eventRows, activityRows] = await Promise.all([api.home(), api.shopping(), api.tasks(), api.projects(), api.events(), api.activity()])
-      setDashboard(home); setShopping(shop); setTasks(taskRows); setProjects(projectRows); setEvents(eventRows); setActivity(activityRows); setHousehold(home.household); setCalendarStatus(home.calendar_status || { configured: false }); setLastSync(new Date())
+      const [home, shop, taskRows, projectRows, eventRows, activityRows] = await Promise.allSettled([
+        api.home(), api.shopping(), api.tasks(), api.projects(), api.events(), api.activity(),
+      ] as const)
+      const failures: unknown[] = []
+
+      if (home.status === 'fulfilled') {
+        setDashboard(home.value)
+        setHousehold(home.value.household)
+        setCalendarStatus(home.value.calendar_status || { configured: false })
+      } else failures.push(home.reason)
+
+      if (shop.status === 'fulfilled') setShopping(shop.value)
+      else failures.push(shop.reason)
+      if (taskRows.status === 'fulfilled') setTasks(taskRows.value)
+      else failures.push(taskRows.reason)
+      if (projectRows.status === 'fulfilled') setProjects(projectRows.value)
+      else failures.push(projectRows.reason)
+      if (eventRows.status === 'fulfilled') setEvents(eventRows.value)
+      else failures.push(eventRows.reason)
+      if (activityRows.status === 'fulfilled') setActivity(activityRows.value)
+      else failures.push(activityRows.reason)
+
+      if (failures.length < 6) setLastSync(new Date())
+      if (home.status === 'rejected') throw home.reason
+      if (!quiet && failures.length) setError('חלק מהמידע לא הסתנכרן. הנתונים שהתקבלו עודכנו.')
     } finally { if (!quiet) setRefreshing(false) }
   }, [])
 
   useEffect(() => { ;(async () => { try { const initData = tg?.initData || ''; if (!sessionStorage.getItem('home_session')) { if (!initData) throw new Error('פתח את האפליקציה מתוך הבוט בטלגרם כדי להתחבר בבטחה.'); const auth = await authenticate(initData); setUserName(auth.user.name) } await load(true) } catch (caught) { setError(caught instanceof Error ? caught.message : 'אירעה שגיאה') } finally { setLoading(false) } })() }, [load])
-  useEffect(() => { const refresh = () => { if (document.visibilityState === 'visible') load(true).catch(() => undefined) }; const timer = window.setInterval(refresh, 30000); document.addEventListener('visibilitychange', refresh); return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', refresh) } }, [load])
+  useEffect(() => { const refresh = () => { if (document.visibilityState === 'visible') load(true).catch(caught => setError(errorText(caught))) }; const timer = window.setInterval(refresh, 30000); document.addEventListener('visibilitychange', refresh); return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', refresh) } }, [load])
+  useEffect(() => {
+    if (tab !== 'tasks') return
+    const refresh = () => { if (document.visibilityState === 'visible') refreshTasks().catch(caught => setError(errorText(caught))) }
+    refresh()
+    const timer = window.setInterval(refresh, 10000)
+    return () => window.clearInterval(timer)
+  }, [tab, refreshTasks])
   const navigate = (next: Tab) => { hapticSelection(); setTab(next); history.replaceState(null, '', next === 'home' ? '/app' : `/app?tab=${next}`) }
-  const refresh = async () => { try { await load() } catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)) } }
+  const refresh = async () => { try { await load() } catch (caught) { setError(errorText(caught)) } }
   if (loading) return <Loading />
   if (error && !dashboard) return <FatalError message={error} />
 
