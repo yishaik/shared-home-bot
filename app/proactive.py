@@ -163,11 +163,12 @@ class ProactiveEngine:
     """Heartbeat that lets the bot initiate: reminders, calendar nudges,
     task due-nudges and a morning household brief. One asyncio task, 60s ticks."""
 
-    def __init__(self, settings, store, service, bot, *, tick_seconds: int = 60):
+    def __init__(self, settings, store, service, bot, *, telegram_store=None, tick_seconds: int = 60):
         self.settings = settings
         self.store = store
         self.service = service
         self.bot = bot
+        self.telegram_store = telegram_store
         self.tick_seconds = tick_seconds
         self._task: asyncio.Task | None = None
         self._last_calendar_sync = 0.0
@@ -267,11 +268,28 @@ class ProactiveEngine:
                 delivered += 1
             except Exception:
                 log.warning("proactive send failed chat_id=%s", chat_id, exc_info=True)
-        if delivered:
-            # keep the agent's conversation context aware of what the household was told
-            # (user_id=0 = system sender; messages.telegram_user_id is NOT NULL)
-            await self.store.add_message(role="assistant", content=f"[הודעה יזומה] {text}", user_id=0)
+                continue
+            await self._record_proactive(chat_id, text)
         return delivered
+
+    async def _record_proactive(self, chat_id: int, text: str) -> None:
+        """Log a proactive message into the recipient's own private-chat transcript
+        so the topic-aware agent knows what the bot already told them. Private chats
+        have chat_id == user_id and topic 0 → scope telegram:{chat_id}:0 under the
+        default coordinator agent (falls back to the legacy store if unwired)."""
+        content = f"[הודעה יזומה] {text}"
+        try:
+            if self.telegram_store is not None:
+                await self.telegram_store.add_message(
+                    scope_key=f"telegram:{chat_id}:0",
+                    agent_id="coordinator",
+                    role="assistant",
+                    content=content,
+                )
+            else:
+                await self.store.add_message(role="assistant", content=content, user_id=0)
+        except Exception:
+            log.warning("failed to record proactive message chat_id=%s", chat_id, exc_info=True)
 
     # ── reminders ──────────────────────────────────────────────────────────
     async def _fire_due_reminders(self, now_utc: dt.datetime) -> None:

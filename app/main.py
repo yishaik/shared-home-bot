@@ -173,7 +173,7 @@ def create_app() -> FastAPI:
             own_task(tg_app.updater.start_polling(allowed_updates=Update.ALL_TYPES))
             log.info("long polling started")
 
-        engine = ProactiveEngine(settings, store, service, tg_app.bot)
+        engine = ProactiveEngine(settings, store, service, tg_app.bot, telegram_store=platform.telegram_store)
         try:
             await engine.start()
         except Exception:
