@@ -18,6 +18,7 @@ from app.config import get_settings
 from app.drive_service import DriveService
 from app.files_api import build_files_router
 from app.memory_control import ensure_memory_control_schema
+from app.proactive import ProactiveEngine
 from app.store_v2 import Store
 from app.services import HomeService
 
@@ -80,6 +81,12 @@ def create_app() -> FastAPI:
             asyncio.create_task(tg_app.updater.start_polling(allowed_updates=Update.ALL_TYPES))
             log.info("long polling started")
 
+        engine = ProactiveEngine(settings, store, service, tg_app.bot)
+        try:
+            await engine.start()
+        except Exception:
+            log.exception("proactive engine failed to start — bot stays reactive")
+
         app.state.store = store
         app.state.service = service
         app.state.drive = drive
@@ -87,6 +94,7 @@ def create_app() -> FastAPI:
         state["ready"] = True
         yield
         state["ready"] = False
+        await engine.stop()
         if tg_app.updater and tg_app.updater.running:
             await tg_app.updater.stop()
         await tg_app.stop()

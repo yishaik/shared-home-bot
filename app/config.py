@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     app_session_secret: str = Field(default="", alias="APP_SESSION_SECRET")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
+    # Proactivity (DB `settings` keys with the same names override these env defaults)
+    proactive_enabled: bool = Field(default=True, alias="PROACTIVE_ENABLED")
+    brief_time: str = Field(default="08:00", alias="BRIEF_TIME")
+    quiet_hours: str = Field(default="22:30-07:30", alias="QUIET_HOURS")
+    calendar_nudge_minutes: int = Field(default=30, alias="CALENDAR_NUDGE_MINUTES")
+
     # Google (dedicated bot account, OAuth refresh-token flow — see scripts/google_oauth.py)
     google_client_id: str = Field(default="", alias="GOOGLE_CLIENT_ID")
     google_client_secret: str = Field(default="", alias="GOOGLE_CLIENT_SECRET")
