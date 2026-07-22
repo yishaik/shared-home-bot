@@ -19,6 +19,15 @@ def test_reply_keyboard_labels_are_all_routable() -> None:
     assert all(callable(handler) for handler in MENU_ACTIONS.values())
 
 
+def test_keyboard_and_menu_actions_do_not_duplicate() -> None:
+    from app.bot import cmd_menu
+
+    # The persistent keyboard's content actions and the inline "more" drawer must
+    # be disjoint (📋 תפריט only opens the drawer, so it is not a content action).
+    keyboard_content = {h for h in BUTTON_ACTIONS.values() if h is not cmd_menu}
+    assert keyboard_content.isdisjoint(MENU_ACTIONS.values())
+
+
 def test_reply_keyboard_hides_app_button_without_url() -> None:
     keyboard = _reply_keyboard(SimpleNamespace(resolved_mini_app_url=""))
     labels = [button.text for row in keyboard.keyboard for button in row]

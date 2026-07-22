@@ -44,12 +44,13 @@ def _app_keyboard(settings: Settings) -> InlineKeyboardMarkup | None:
 
 
 # Persistent bottom keyboard so the household never has to type / commands.
-# Tapping a label sends its text, which on_text routes to the matching action.
+# It holds the daily-frequent actions; everything else lives behind 📋 תפריט so
+# no action is duplicated across the two surfaces. Tapping a label sends its text,
+# which on_text routes to the matching action.
 def _reply_keyboard(settings: Settings) -> ReplyKeyboardMarkup:
     rows = [
         [KeyboardButton("🛒 קניות"), KeyboardButton("✅ משימות")],
-        [KeyboardButton("📅 אירועים"), KeyboardButton("🧠 זיכרון")],
-        [KeyboardButton("🤖 סוכנים"), KeyboardButton("📋 תפריט")],
+        [KeyboardButton("📅 אירועים"), KeyboardButton("📋 תפריט")],
     ]
     if settings.resolved_mini_app_url:
         rows.append([KeyboardButton("🏠 אפליקציה", web_app=WebAppInfo(url=settings.resolved_mini_app_url))])
@@ -59,25 +60,21 @@ def _reply_keyboard(settings: Settings) -> ReplyKeyboardMarkup:
 async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _authorized(update, context):
         return
-    settings: Settings = context.application.bot_data["settings"]
+    # Only the actions that are NOT on the persistent keyboard live here, so the
+    # two surfaces never duplicate. Daily actions (קניות/משימות/אירועים/אפליקציה)
+    # stay on the bottom keyboard.
     rows = [
         [
-            InlineKeyboardButton("🛒 קניות", callback_data="menu:shop"),
-            InlineKeyboardButton("✅ משימות", callback_data="menu:todos"),
-        ],
-        [
-            InlineKeyboardButton("📅 אירועים", callback_data="menu:events"),
             InlineKeyboardButton("🧠 זיכרון", callback_data="menu:memory"),
+            InlineKeyboardButton("🤖 סוכנים", callback_data="menu:agents"),
         ],
         [
-            InlineKeyboardButton("🤖 סוכנים", callback_data="menu:agents"),
             InlineKeyboardButton("🗂 Topics", callback_data="menu:topics"),
+            InlineKeyboardButton("❓ עזרה", callback_data="menu:help"),
         ],
     ]
-    if settings.resolved_mini_app_url:
-        rows.append([InlineKeyboardButton("🏠 פתיחת הבית", web_app=WebAppInfo(url=settings.resolved_mini_app_url))])
     await update.effective_message.reply_text(
-        "מה נעשה? אפשר גם פשוט לכתוב לי מה צריך.",
+        "עוד פעולות — הפעולות היומיומיות נמצאות בכפתורים שלמטה:",
         reply_markup=InlineKeyboardMarkup(rows),
     )
 
@@ -531,18 +528,15 @@ BUTTON_ACTIONS = {
     "🛒 קניות": cmd_shop,
     "✅ משימות": cmd_todos,
     "📅 אירועים": cmd_events,
-    "🧠 זיכרון": cmd_memory,
-    "🤖 סוכנים": cmd_agents,
     "📋 תפריט": cmd_menu,
 }
 
+# The "more" drawer behind 📋 תפריט — disjoint from the keyboard above (no dupes).
 MENU_ACTIONS = {
-    "shop": cmd_shop,
-    "todos": cmd_todos,
-    "events": cmd_events,
     "memory": cmd_memory,
     "agents": cmd_agents,
     "topics": cmd_topics,
+    "help": cmd_help,
 }
 
 
