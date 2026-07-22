@@ -132,7 +132,9 @@ def test_inline_configuration_is_clamped_to_telegram_limits() -> None:
     configured = settings(
         TELEGRAM_INLINE_MAX_RESULTS=500,
         TELEGRAM_INLINE_CACHE_SECONDS=-1,
+        TELEGRAM_INLINE_USAGE_RETENTION_DAYS=1000,
     )
 
     assert configured.telegram_inline_max_results == 50
     assert configured.telegram_inline_cache_seconds == 0
+    assert configured.telegram_inline_usage_retention_days == 365
