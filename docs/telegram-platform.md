@@ -5,7 +5,7 @@
 Turn Telegram from a single private-chat transport into a first-class household runtime with:
 
 - private chats, groups, supergroups and forum topics;
-- isolated conversation context per `chat_id + message_thread_id`;
+- isolated conversation context per `chat_id + topic_id` (`message_thread_id` or direct-message topic);
 - topic-to-agent bindings and automatic specialist routing;
 - topic lifecycle management;
 - explicit chat and user authorization;
@@ -36,7 +36,7 @@ flowchart LR
     ROUTER --> CTX[(Scoped Telegram transcripts)]
 ```
 
-The important boundary is deliberate: household state is shared, but conversational history is not. A calendar discussion in one topic does not leak into a shopping topic or an unrelated group.
+The important boundary is deliberate: operational household state is shared, but conversational history and private context are not. A calendar discussion in one topic does not leak into a shopping topic or an unrelated group.
 
 ## Implemented capabilities
 
@@ -49,7 +49,7 @@ The important boundary is deliberate: household state is shared, but conversatio
 | Sub-agents | Coordinator, tasks, shopping, calendar and memory |
 | Topic bindings | `/agent <id>` or automatic routing |
 | Topic lifecycle sync | Service-message tracking in SQLite |
-| Scoped memory | Transcript and rolling summary per topic/agent |
+| Scoped memory | Transcript and rolling summary per topic/agent; private reflection remains private by default |
 | Chat membership | Bot and member state tracking |
 | Webhook retries | Processing/done/failed update ledger |
 | Advanced Bot API | Raw, opt-in capability adapter with safe fallback |
@@ -63,7 +63,7 @@ The important boundary is deliberate: household state is shared, but conversatio
 - `topics`: respond only in topics bound to an agent;
 - `mention_or_topic`: recommended default.
 
-Groups are fail-closed by default. Add their IDs to `ALLOWED_CHAT_IDS`, or intentionally set `TELEGRAM_ALLOW_UNLISTED_GROUPS=true`.
+Groups are fail-closed by default. Add their IDs to `ALLOWED_CHAT_IDS`, or intentionally set `TELEGRAM_ALLOW_UNLISTED_GROUPS=true`. Private memory, notes, people, settings and Google Docs/Sheets are also blocked in groups unless `TELEGRAM_GROUP_ALLOW_PRIVATE_CONTEXT=true` is explicitly enabled.
 
 Telegram Privacy Mode still matters. For ambient group operation, disable Privacy Mode in BotFather or make the bot an administrator. For mention/reply-only operation, Privacy Mode can remain enabled.
 
