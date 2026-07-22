@@ -15,6 +15,17 @@ class Settings(BaseSettings):
     telegram_bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
     telegram_webhook_secret: str = Field(default="", alias="TELEGRAM_WEBHOOK_SECRET")
     allowed_user_ids: list[int] = Field(default_factory=list, alias="ALLOWED_USER_IDS")
+    allowed_chat_ids: list[int] = Field(default_factory=list, alias="ALLOWED_CHAT_IDS")
+    telegram_admin_user_ids: list[int] = Field(default_factory=list, alias="TELEGRAM_ADMIN_USER_IDS")
+    telegram_allow_unlisted_groups: bool = Field(default=False, alias="TELEGRAM_ALLOW_UNLISTED_GROUPS")
+    telegram_group_response_mode: str = Field(default="mention_or_topic", alias="TELEGRAM_GROUP_RESPONSE_MODE")
+    telegram_allow_topic_creation: bool = Field(default=True, alias="TELEGRAM_ALLOW_TOPIC_CREATION")
+    telegram_enable_private_topics: bool = Field(default=True, alias="TELEGRAM_ENABLE_PRIVATE_TOPICS")
+    telegram_concurrent_updates: int = Field(default=16, alias="TELEGRAM_CONCURRENT_UPDATES")
+    telegram_raw_api_enabled: bool = Field(default=False, alias="TELEGRAM_RAW_API_ENABLED")
+    telegram_enable_ephemeral_messages: bool = Field(default=False, alias="TELEGRAM_ENABLE_EPHEMERAL_MESSAGES")
+    telegram_enable_rich_messages: bool = Field(default=False, alias="TELEGRAM_ENABLE_RICH_MESSAGES")
+    telegram_bot_api_base_url: str = Field(default="https://api.telegram.org", alias="TELEGRAM_BOT_API_BASE_URL")
 
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-4o", alias="OPENAI_MODEL")
@@ -38,7 +49,6 @@ class Settings(BaseSettings):
     app_session_secret: str = Field(default="", alias="APP_SESSION_SECRET")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
-    # Google (dedicated bot account, OAuth refresh-token flow — see scripts/google_oauth.py)
     google_client_id: str = Field(default="", alias="GOOGLE_CLIENT_ID")
     google_client_secret: str = Field(default="", alias="GOOGLE_CLIENT_SECRET")
     google_refresh_token: str = Field(default="", alias="GOOGLE_REFRESH_TOKEN")
@@ -46,7 +56,7 @@ class Settings(BaseSettings):
     google_docs_folder_id: str = Field(default="", alias="GOOGLE_DOCS_FOLDER_ID")
     google_oauth_setup_secret: str = Field(default="", alias="GOOGLE_OAUTH_SETUP_SECRET")
 
-    @field_validator("allowed_user_ids", mode="before")
+    @field_validator("allowed_user_ids", "allowed_chat_ids", "telegram_admin_user_ids", mode="before")
     @classmethod
     def parse_ids(cls, value):
         if value is None or value == "":
@@ -54,6 +64,20 @@ class Settings(BaseSettings):
         if isinstance(value, list):
             return [int(x) for x in value]
         return [int(x.strip()) for x in str(value).split(",") if x.strip()]
+
+    @field_validator("telegram_group_response_mode")
+    @classmethod
+    def validate_group_response_mode(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        allowed = {"all", "mentions", "topics", "mention_or_topic"}
+        if normalized not in allowed:
+            raise ValueError(f"TELEGRAM_GROUP_RESPONSE_MODE must be one of {sorted(allowed)}")
+        return normalized
+
+    @field_validator("telegram_concurrent_updates")
+    @classmethod
+    def validate_concurrency(cls, value: int) -> int:
+        return max(1, min(int(value), 64))
 
     @property
     def resolved_public_url(self) -> str:
