@@ -4,12 +4,18 @@ import asyncio
 import json
 import logging
 from collections import defaultdict
-from typing import Any
+from typing import Any, Coroutine
 
 from openai import AsyncOpenAI
 
 from app.agent_profiles import AgentProfile
 from app.config import Settings
+from app.memory_control import (
+    auto_memory_enabled,
+    mark_reflection_failed,
+    mark_reflection_finished,
+    mark_reflection_started,
+)
 from app.services import HomeService
 from app.store_v2 import Store
 from app.telegram_models import TelegramEnvelope
@@ -33,9 +39,60 @@ class TelegramAgentRuntime:
             kwargs["base_url"] = settings.openai_base_url
         self.client = AsyncOpenAI(**kwargs)
         self._locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._reflection_lock = asyncio.Lock()
+        self._background_tasks: set[asyncio.Task[Any]] = set()
+        self._closing = False
 
-    async def shutdown(self) -> None:
+    def _spawn_background(self, coro: Coroutine[Any, Any, Any], *, name: str) -> None:
+        if self._closing:
+            coro.close()
+            return
+        task = asyncio.create_task(coro, name=name)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    async def shutdown(self, timeout_seconds: float = 12.0) -> None:
+        self._closing = True
+        tasks = list(self._background_tasks)
+        if tasks:
+            _done, pending = await asyncio.wait(tasks, timeout=timeout_seconds)
+            for task in pending:
+                task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
         await self.client.close()
+
+    async def _reflect_if_due(self, every: int = 20) -> None:
+        """Preserve the existing self-maintaining shared-memory lifecycle."""
+        if self._closing or not await auto_memory_enabled(self.store):
+            return
+        try:
+            count = int(await self.store.get_setting("_msgs_since_reflect", "0") or 0) + 1
+        except ValueError:
+            count = 1
+        if count < every:
+            await self.store.set_setting("_msgs_since_reflect", str(count))
+            return
+
+        async with self._reflection_lock:
+            if self._closing or not await auto_memory_enabled(self.store):
+                return
+            reflector = getattr(self.store, "reflector", None)
+            if not reflector:
+                return
+            await mark_reflection_started(self.store)
+            try:
+                async with asyncio.timeout(90):
+                    result = await reflector.reflect()
+                await self.store.set_setting("_msgs_since_reflect", "0")
+                await mark_reflection_finished(self.store)
+                log.info("reflection completed: %s", result)
+            except asyncio.CancelledError:
+                await mark_reflection_failed(self.store, "cancelled during shutdown")
+                raise
+            except Exception as exc:
+                await mark_reflection_failed(self.store, str(exc))
+                log.exception("reflection failed — counter retained for retry")
 
     def _history_to_openai(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = []
@@ -232,6 +289,7 @@ Rules:
                     username=envelope.username,
                     display_name=envelope.display_name,
                 )
+                self._spawn_background(self._reflect_if_due(), name="telegram-memory-reflection")
                 return text
 
         fallback = "לא הצלחתי להשלים את הפעולה בבטחה. נסה לנסח אותה בקצרה יותר."
