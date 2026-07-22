@@ -96,6 +96,33 @@ async def ensure_schema(store) -> None:
     await store.db.commit()
 
 
+async def member_names(store) -> list[str]:
+    try:
+        members = await store.list_members()
+    except Exception:
+        return []
+    return [str(m.get("display_name") or m.get("username") or "").strip()
+            for m in members if (m.get("display_name") or m.get("username"))]
+
+
+async def resolve_member(store, query: str) -> dict[str, Any] | None:
+    """Map a spoken name to a household member (case-insensitive substring match)."""
+    q = (query or "").strip().lower()
+    if not q:
+        return None
+    try:
+        members = await store.list_members()
+    except Exception:
+        return None
+    for member in members:
+        display = str(member.get("display_name") or "")
+        username = str(member.get("username") or "")
+        haystacks = [display.lower(), username.lower()]
+        if any(h and (q in h or h in q) for h in haystacks):
+            return {"user_id": int(member["telegram_user_id"]), "name": display or username or str(member["telegram_user_id"])}
+    return None
+
+
 async def reminder_add(store, settings, *, text: str, due_at: str, created_by: int,
                        target_user_id: int | None = None, recurrence: str = "") -> dict[str, Any]:
     await ensure_schema(store)
@@ -255,7 +282,15 @@ class ProactiveEngine:
         tz = self._tz()
         for raw in rows:
             row = dict(raw)
-            await self.send(f"⏰ תזכורת: {row['text']}", target_user_id=row["target_user_id"])
+            delivered = await self.send(f"⏰ תזכורת: {row['text']}", target_user_id=row["target_user_id"])
+            # If a reminder aimed at a specific person could not be delivered (they
+            # never opened the bot), tell whoever set it instead of failing silently.
+            if row["target_user_id"] and delivered == 0 and row["created_by"] and row["created_by"] != row["target_user_id"]:
+                await self.send(
+                    f"⚠️ לא הצלחתי לשלוח את התזכורת ({row['text']}) — הנמען עדיין לא פתח את הבוט. "
+                    f"בקש/י ממנו/ה לשלוח /start פעם אחת.",
+                    target_user_id=row["created_by"],
+                )
             follow_up = None
             if row["recurrence"]:
                 follow_up = next_occurrence(to_local(row["due_at"], tz), row["recurrence"])

@@ -53,7 +53,7 @@ TOOL_SPECS: list[dict[str, Any]] = [
     _tool("setting_get", "Get one household preference or list all.", {"key": {"type": "string"}}),
     _tool("core_memory_append", "Append a lasting essential to Core memory.", {"text": {"type": "string"}}, ["text"]),
     _tool("core_memory_replace", "Replace an exact substring in Core memory.", {"find": {"type": "string"}, "replace": {"type": "string", "default": ""}}, ["find"]),
-    _tool("remind_add", "Schedule a proactive reminder. recurrence: once, daily or weekly.", {"text": {"type": "string"}, "due_at": {"type": "string"}, "target": {"type": "string", "enum": ["me", "all"], "default": "all"}, "recurrence": {"type": "string", "enum": ["", "daily", "weekly"], "default": ""}}, ["text", "due_at"]),
+    _tool("remind_add", "Schedule a proactive reminder the bot sends at the given time. Resolve relative times like 'in 90 minutes' against the current local time in context. recurrence: once, daily or weekly. To relay a reminder to a specific household member (e.g. 'remind Lisya to…'), set target_name to that member's name and phrase the text addressed to them.", {"text": {"type": "string"}, "due_at": {"type": "string"}, "target": {"type": "string", "enum": ["me", "all"], "default": "all"}, "target_name": {"type": "string", "description": "Deliver only to this household member by name; overrides target."}, "recurrence": {"type": "string", "enum": ["", "daily", "weekly"], "default": ""}}, ["text", "due_at"]),
     _tool("remind_list", "List pending reminders.", {}),
     _tool("remind_cancel", "Cancel a reminder by id.", {"id": {"type": "integer"}}, ["id"]),
 ]
@@ -163,8 +163,21 @@ async def run_tool(store: Store, service: HomeService, name: str, arguments: dic
         if name == "setting_get":
             return json.dumps({"ok": True, "key": arguments["key"], "value": await store.get_setting(arguments["key"])} if arguments.get("key") else {"ok": True, "settings": await store.list_settings()}, ensure_ascii=False)
         if name == "remind_add":
-            target_user = actor if arguments.get("target") == "me" else None
+            target_name = (arguments.get("target_name") or "").strip()
+            target_user = None
+            recipient = "everyone"
+            if target_name:
+                member = await proactive.resolve_member(store, target_name)
+                if not member:
+                    known = await proactive.member_names(store)
+                    return json.dumps({"ok": False, "error": f"no household member matches '{target_name}'", "known_members": known}, ensure_ascii=False)
+                target_user = member["user_id"]
+                recipient = member["name"]
+            elif arguments.get("target") == "me":
+                target_user = actor
+                recipient = "you"
             item = await proactive.reminder_add(store, settings, text=arguments["text"], due_at=arguments["due_at"], created_by=actor, target_user_id=target_user, recurrence=arguments.get("recurrence") or "")
+            item["recipient"] = recipient
             return json.dumps({"ok": True, "reminder": item}, ensure_ascii=False)
         if name == "remind_list":
             return json.dumps({"ok": True, "reminders": await proactive.reminder_list(store, settings)}, ensure_ascii=False)
