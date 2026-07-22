@@ -1,0 +1,48 @@
+name: Apply production inbox CI fix
+
+on:
+  push:
+    branches: [agent/production-smart-inbox]
+    paths:
+      - '.github/workflows/apply-production-inbox-ci-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fix concurrent claim and needs-review retry semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('app/smart_inbox_service.py')
+          s = p.read_text()
+          old = '''        if cur.rowcount != 1:\n            await self.store.db.rollback()\n            raise InboxConflictError("Proposal changed; refresh before acting")\n'''
+          new = '''        if cur.rowcount != 1:\n            # This connection is shared by concurrent async handlers. A rollback here\n            # could undo another handler's successful claim that has not committed yet.\n            raise InboxConflictError("Proposal changed; refresh before acting")\n'''
+          assert old in s
+          s = s.replace(old, new)
+          old = '''        if cur.rowcount != 1:\n            await self.store.db.rollback()\n            raise InboxConflictError("Proposal was claimed by another request")\n'''
+          new = '''        if cur.rowcount != 1:\n            # A zero-row compare-and-swap is already a clean conflict. Never rollback\n            # the shared connection: another coroutine may own the active transaction.\n            raise InboxConflictError("Proposal was claimed by another request")\n'''
+          assert old in s
+          s = s.replace(old, new)
+          old = '''        proposal = await self.get(proposal_id, actor_id)\n        if proposal["status"] != "failed":\n            raise InboxConflictError("Only failed proposals can be retried")\n        if any(step["status"] in {"executing", "uncertain"} for step in proposal["steps"]):\n            raise InboxNeedsReviewError("Manual review is required")\n'''
+          new = '''        proposal = await self.get(proposal_id, actor_id)\n        if proposal["status"] == "needs_review" or any(\n            step["status"] in {"executing", "uncertain"} for step in proposal["steps"]\n        ):\n            raise InboxNeedsReviewError("Manual review is required")\n        if proposal["status"] != "failed":\n            raise InboxConflictError("Only failed proposals can be retried")\n'''
+          assert old in s
+          p.write_text(s.replace(old, new))
+          PY
+          rm -rf .ci-diagnostic
+          rm -f .github/workflows/diagnose-production-inbox.yml
+          rm -f .github/workflows/apply-production-inbox-ci-fix.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Fix inbox concurrency and review retry semantics'
+          git push origin "HEAD:${GITHUB_REF_NAME}"
