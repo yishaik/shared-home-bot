@@ -203,7 +203,7 @@ def create_app() -> FastAPI:
             return JSONResponse({"detail": "no refresh_token (re-consent with prompt=consent)", "response": data}, status_code=400)
         await store.set_setting("google_refresh_token", refresh)
         settings.google_refresh_token = refresh
-        drive._service = None
+        drive.reset_credentials()
         log.info("google oauth: refresh token stored (len=%s)", len(refresh))
         return Response(content="<html><body style='font-family:system-ui;padding:2rem'>"
                         "<h2>✅ Google מחובר</h2><p>אפשר לסגור את הדף. Shared Home Bot ישלים מכאן.</p></body></html>",
