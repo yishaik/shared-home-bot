@@ -14,10 +14,14 @@ from telegram import BotCommand, MenuButtonWebApp, Update, WebAppInfo
 from app.agent import HomeAgent
 from app.api import build_api_router
 from app.bot import build_application
+from app.calendar_service import CalendarService
 from app.config import get_settings
+from app.member_service import MemberService
 from app.memory_control import ensure_memory_control_schema
+from app.notification_service import NotificationService
 from app.store_v2 import Store
 from app.services import HomeService
+from app.work_service import WorkService
 
 settings = get_settings()
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -27,7 +31,38 @@ log = logging.getLogger("homebot")
 def create_app() -> FastAPI:
     store = Store(settings.db_path, settings.household_id)
     service = HomeService(store)
-    state: dict = {"tg_app": None, "agent": None, "ready": False}
+    calendar = CalendarService(settings, store)
+    work = WorkService(settings, store, calendar)
+    members = MemberService(store)
+    notifications = NotificationService(store, settings)
+    state: dict = {"tg_app": None, "agent": None, "ready": False, "workers": set()}
+
+    def own_task(coro) -> asyncio.Task:
+        task = asyncio.create_task(coro)
+        state["workers"].add(task)
+        task.add_done_callback(state["workers"].discard)
+        return task
+
+    async def calendar_sync_worker() -> None:
+        while True:
+            try:
+                if settings.google_enabled:
+                    await calendar.incremental_sync()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("periodic calendar sync failed")
+            await asyncio.sleep(600)
+
+    async def notification_worker(bot) -> None:
+        while True:
+            try:
+                await notifications.deliver_pending(bot)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("Telegram notification delivery failed")
+            await asyncio.sleep(20)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -35,6 +70,10 @@ def create_app() -> FastAPI:
         await store.connect()
         await ensure_memory_control_schema(store)
         await store.bootstrap_household(settings.home_name, settings.household_timezone, settings.allowed_user_ids)
+        await members.ensure_schema()
+        await work.ensure_schema()
+        await calendar.ensure_schema()
+        await notifications.ensure_schema()
         try:
             await store.attach_memory(settings)
         except Exception:
@@ -46,7 +85,9 @@ def create_app() -> FastAPI:
         await tg_app.start()
 
         if settings.resolved_mini_app_url:
-            await tg_app.bot.set_chat_menu_button(menu_button=MenuButtonWebApp(text="הבית", web_app=WebAppInfo(url=settings.resolved_mini_app_url)))
+            await tg_app.bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(text="הבית", web_app=WebAppInfo(url=settings.resolved_mini_app_url))
+            )
         await tg_app.bot.set_my_commands([
             BotCommand("start", "פתיחת הבית"),
             BotCommand("app", "אפליקציית הבית"),
@@ -66,8 +107,11 @@ def create_app() -> FastAPI:
             log.info("webhook configured")
         else:
             await tg_app.bot.delete_webhook(drop_pending_updates=False)
-            asyncio.create_task(tg_app.updater.start_polling(allowed_updates=Update.ALL_TYPES))
+            own_task(tg_app.updater.start_polling(allowed_updates=Update.ALL_TYPES))
             log.info("long polling started")
+
+        own_task(calendar_sync_worker())
+        own_task(notification_worker(tg_app.bot))
 
         app.state.store = store
         app.state.service = service
@@ -75,6 +119,12 @@ def create_app() -> FastAPI:
         state["ready"] = True
         yield
         state["ready"] = False
+
+        workers = list(state["workers"])
+        for task in workers:
+            task.cancel()
+        if workers:
+            await asyncio.gather(*workers, return_exceptions=True)
         if tg_app.updater and tg_app.updater.running:
             await tg_app.updater.stop()
         await tg_app.stop()
@@ -82,7 +132,7 @@ def create_app() -> FastAPI:
         await tg_app.shutdown()
         await store.close()
 
-    api = FastAPI(title="Shared Home Bot", version="2.1.0", lifespan=lifespan)
+    api = FastAPI(title="Shared Home Bot", version="3.0.0", lifespan=lifespan)
     api.include_router(build_api_router(settings, store, service))
 
     @api.middleware("http")
@@ -100,7 +150,13 @@ def create_app() -> FastAPI:
 
     @api.get("/")
     async def root():
-        return {"ok": True, "bot": settings.bot_display_name, "home": settings.home_name, "mode": "webhook" if settings.webhook_url else "polling", "mini_app": bool(settings.resolved_mini_app_url)}
+        return {
+            "ok": True,
+            "bot": settings.bot_display_name,
+            "home": settings.home_name,
+            "mode": "webhook" if settings.webhook_url else "polling",
+            "mini_app": bool(settings.resolved_mini_app_url),
+        }
 
     @api.get("/health/live")
     async def live():
@@ -114,7 +170,11 @@ def create_app() -> FastAPI:
             await store.get_household()
         except Exception:
             return JSONResponse({"status": "database_unavailable"}, status_code=503)
-        return {"status": "ready"}
+        return {
+            "status": "ready",
+            "calendar": await calendar.status(),
+            "workers": len(state["workers"]),
+        }
 
     @api.get("/health")
     async def health():
@@ -190,9 +250,10 @@ def create_app() -> FastAPI:
             return JSONResponse({"detail": "no refresh_token (re-consent with prompt=consent)", "response": data}, status_code=400)
         await store.set_setting("google_refresh_token", refresh)
         log.info("google oauth: refresh token stored (len=%s)", len(refresh))
-        return Response(content="<html><body style='font-family:system-ui;padding:2rem'>"
-                        "<h2>✅ Google מחובר</h2><p>אפשר לסגור את הדף. Alfred ישלים מכאן.</p></body></html>",
-                        media_type="text/html")
+        return Response(
+            content="<html><body style='font-family:system-ui;padding:2rem'><h2>✅ Google מחובר</h2><p>אפשר לסגור את הדף.</p></body></html>",
+            media_type="text/html",
+        )
 
     @api.get("/google/oauth/token")
     async def google_oauth_token(secret: str = ""):
