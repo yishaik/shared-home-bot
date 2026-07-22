@@ -13,3 +13,7 @@ for _name in (
     "calendar_sync",
 ):
     setattr(google_client, _name, getattr(_calendar_gateway, _name))
+
+# Import after the gateway functions are attached; this patches the 410-token
+# recovery path without re-entering CalendarService's sync lock.
+from app import calendar_service_patch as _calendar_service_patch  # noqa: E402,F401
