@@ -75,7 +75,6 @@ class DriveService:
         self._service: Any | None = None
         self._credentials_key: tuple[str, str, str] | None = None
         self._root_id: str | None = None
-        self._known_descendants: set[str] = set()
         self._lock = asyncio.Lock()
 
     def reset_credentials(self) -> None:
@@ -160,7 +159,6 @@ class DriveService:
                 log.info("created managed Google Drive root folder id=%s", root_id)
 
             self._root_id = str(root_id)
-            self._known_descendants.add(self._root_id)
             # Keep legacy Google Docs/Sheets tools pointed at the same folder for
             # the lifetime of this process. The persisted DB setting survives restarts.
             self.settings.google_drive_folder_id = self._root_id
@@ -249,11 +247,6 @@ class DriveService:
             if folder_required and item.get("mimeType") != FOLDER_MIME_TYPE:
                 raise DriveBoundaryError("Target is not a folder")
             return item
-        if file_id in self._known_descendants:
-            item = await self._metadata(file_id)
-            if folder_required and item.get("mimeType") != FOLDER_MIME_TYPE:
-                raise DriveBoundaryError("Target is not a folder")
-            return item
 
         current_id = file_id
         visited: set[str] = set()
@@ -268,7 +261,6 @@ class DriveService:
                 raise FileNotFoundError(file_id)
             parents = list(item.get("parents") or [])
             if root_id in parents:
-                self._known_descendants.update(visited)
                 if folder_required and requested.get("mimeType") != FOLDER_MIME_TYPE:
                     raise DriveBoundaryError("Target is not a folder")
                 return requested
@@ -301,7 +293,6 @@ class DriveService:
             )
             page = response.get("files", [])
             items.extend(_item_payload(item) for item in page)
-            self._known_descendants.update(str(item.get("id")) for item in page if item.get("id"))
             page_token = response.get("nextPageToken")
             if not page_token:
                 break
@@ -320,7 +311,6 @@ class DriveService:
                 supportsAllDrives=True,
             ).execute()
         )
-        self._known_descendants.add(str(item["id"]))
         return _item_payload(item)
 
     async def upload(self, *, name: str, mime_type: str, content: bytes, parent_id: str | None = None) -> dict[str, Any]:
@@ -338,7 +328,6 @@ class DriveService:
                 supportsAllDrives=True,
             ).execute()
         )
-        self._known_descendants.add(str(item["id"]))
         return _item_payload(item)
 
     async def delete(self, file_id: str) -> dict[str, Any]:
@@ -360,5 +349,4 @@ class DriveService:
             if getattr(exc.resp, "status", None) == 404:
                 raise FileNotFoundError(file_id) from exc
             raise DriveUnavailableError("Google Drive trash operation failed") from exc
-        self._known_descendants.discard(file_id)
         return _item_payload(trashed or item)
