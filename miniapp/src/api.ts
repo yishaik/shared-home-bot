@@ -1,4 +1,4 @@
-import type { Activity, Dashboard, HomeEvent, Household, MemoryControl, MemoryItem, ShoppingItem, Todo } from './types'
+import type { Activity, CalendarStatus, Dashboard, HomeEvent, Household, MemoryControl, MemoryItem, ShoppingItem, Todo } from './types'
 
 let token = sessionStorage.getItem('home_session') || ''
 
@@ -28,6 +28,19 @@ export async function authenticate(initData: string) {
   return result
 }
 
+export type EventPayload = {
+  title: string
+  start_at: string
+  end_at?: string
+  location?: string
+  description?: string
+  notes?: string
+  all_day?: boolean
+  attendees?: string[]
+  recurrence?: string[]
+  reminders?: Record<string, unknown>
+}
+
 export const api = {
   home: () => request<Dashboard>('/api/home'),
   activity: () => request<Activity[]>('/api/activity'),
@@ -41,9 +54,13 @@ export const api = {
   }),
   updateTask: (id: number, patch: Partial<Todo>) => request<Todo>(`/api/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteTask: (id: number) => request<void>(`/api/tasks/${id}`, { method: 'DELETE' }),
-  events: () => request<HomeEvent[]>('/api/events'),
-  addEvent: (event: { title: string; start_at: string; end_at?: string; location?: string; notes?: string; all_day?: boolean }) => request<HomeEvent>('/api/events', { method: 'POST', body: JSON.stringify(event) }),
-  deleteEvent: (id: number) => request<void>(`/api/events/${id}`, { method: 'DELETE' }),
+  events: (sync = false) => request<HomeEvent[]>(`/api/events${sync ? '?sync=true' : ''}`),
+  event: (id: string) => request<HomeEvent>(`/api/events/${encodeURIComponent(id)}`),
+  calendarStatus: () => request<CalendarStatus>('/api/events/status'),
+  syncEvents: (full = false) => request<{ ok: boolean; mode: string; count: number }>(`/api/events/sync?full=${full}`, { method: 'POST' }),
+  addEvent: (event: EventPayload) => request<HomeEvent>('/api/events', { method: 'POST', body: JSON.stringify(event) }),
+  updateEvent: (id: string, patch: Partial<EventPayload>) => request<HomeEvent>(`/api/events/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  deleteEvent: (id: string) => request<void>(`/api/events/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   memoryControl: () => request<MemoryControl>('/api/memory/control'),
   updateMemorySettings: (enabled: boolean) => request<MemoryControl['status']>('/api/memory/settings', { method: 'PATCH', body: JSON.stringify({ auto_memory_enabled: enabled }) }),
   updateMemory: (key: string, value: string, category: string) => request<MemoryItem>(`/api/memory/${encodeURIComponent(key)}`, { method: 'PATCH', body: JSON.stringify({ value, category }) }),
