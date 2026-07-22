@@ -14,3 +14,4 @@ for _name in (
 
 from app import calendar_work_block_patch as _calendar_work_block_patch  # noqa: E402,F401
 from app import context_patch as _context_patch  # noqa: E402,F401
+from app import web_prompt_patch as _web_prompt_patch  # noqa: E402,F401
