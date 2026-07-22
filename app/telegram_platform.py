@@ -57,6 +57,9 @@ class TelegramPlatform:
             return self.settings.telegram_allow_unlisted_groups
         return envelope.chat_id in self.settings.allowed_chat_ids
 
+    def private_context_allowed(self, envelope: TelegramEnvelope) -> bool:
+        return envelope.is_private or self.settings.telegram_group_allow_private_context
+
     async def register_message(self, update: Update, envelope: TelegramEnvelope) -> None:
         chat = update.effective_chat
         if not chat:
@@ -70,10 +73,10 @@ class TelegramPlatform:
             is_direct_messages=bool(getattr(chat, "is_direct_messages", False)),
             parent_chat_id=getattr(getattr(chat, "parent_chat", None), "id", None),
         )
-        if envelope.thread_id is not None:
+        if envelope.topic_id is not None:
             await self.telegram_store.upsert_topic(
                 chat_id=envelope.chat_id,
-                thread_id=envelope.thread_id,
+                thread_id=envelope.topic_id,
                 created_by=envelope.user_id,
             )
 
@@ -85,7 +88,7 @@ class TelegramPlatform:
         mode = self.settings.telegram_group_response_mode
         if mode == "all":
             return True
-        bound = await self.telegram_store.topic_agent(envelope.chat_id, envelope.thread_id)
+        bound = await self.telegram_store.topic_agent(envelope.chat_id, envelope.topic_id)
         if mode == "topics":
             return bound is not None
         if mode == "mentions":
