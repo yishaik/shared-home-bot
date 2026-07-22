@@ -15,6 +15,8 @@ from app.agent import HomeAgent
 from app.api import build_api_router
 from app.bot import build_application
 from app.config import get_settings
+from app.drive_service import DriveService
+from app.files_api import build_files_router
 from app.memory_control import ensure_memory_control_schema
 from app.store_v2 import Store
 from app.services import HomeService
@@ -27,6 +29,7 @@ log = logging.getLogger("homebot")
 def create_app() -> FastAPI:
     store = Store(settings.db_path, settings.household_id)
     service = HomeService(store)
+    drive = DriveService(settings, store)
     state: dict = {"tg_app": None, "agent": None, "ready": False}
 
     @asynccontextmanager
@@ -39,6 +42,14 @@ def create_app() -> FastAPI:
             await store.attach_memory(settings)
         except Exception:
             log.exception("memory engine attach failed — continuing with lexical fallback")
+
+        stored_google_refresh = await store.get_setting("google_refresh_token")
+        if settings.google_client_id and settings.google_client_secret and (settings.google_refresh_token or stored_google_refresh):
+            try:
+                await drive.ensure_root()
+            except Exception:
+                log.exception("Google Drive root initialization failed — files section remains unavailable")
+
         agent = HomeAgent(settings, store, service)
         tg_app = build_application(settings, store, service, agent)
         state.update(tg_app=tg_app, agent=agent)
@@ -71,6 +82,7 @@ def create_app() -> FastAPI:
 
         app.state.store = store
         app.state.service = service
+        app.state.drive = drive
         app.state.tg_app = tg_app
         state["ready"] = True
         yield
@@ -82,8 +94,9 @@ def create_app() -> FastAPI:
         await tg_app.shutdown()
         await store.close()
 
-    api = FastAPI(title="Shared Home Bot", version="2.1.0", lifespan=lifespan)
+    api = FastAPI(title="Shared Home Bot", version="2.2.0", lifespan=lifespan)
     api.include_router(build_api_router(settings, store, service))
+    api.include_router(build_files_router(settings, store, drive))
 
     @api.middleware("http")
     async def request_context(request: Request, call_next):
@@ -189,9 +202,11 @@ def create_app() -> FastAPI:
         if not refresh:
             return JSONResponse({"detail": "no refresh_token (re-consent with prompt=consent)", "response": data}, status_code=400)
         await store.set_setting("google_refresh_token", refresh)
+        settings.google_refresh_token = refresh
+        drive._service = None
         log.info("google oauth: refresh token stored (len=%s)", len(refresh))
         return Response(content="<html><body style='font-family:system-ui;padding:2rem'>"
-                        "<h2>✅ Google מחובר</h2><p>אפשר לסגור את הדף. Alfred ישלים מכאן.</p></body></html>",
+                        "<h2>✅ Google מחובר</h2><p>אפשר לסגור את הדף. Shared Home Bot ישלים מכאן.</p></body></html>",
                         media_type="text/html")
 
     @api.get("/google/oauth/token")
