@@ -21,6 +21,8 @@ from telegram import (
 from app.api import build_api_router
 from app.bot import build_application
 from app.config import get_settings
+from app.drive_service import DriveService
+from app.files_api import build_files_router
 from app.memory_control import ensure_memory_control_schema
 from app.services import HomeService
 from app.store_v2 import Store
@@ -37,6 +39,7 @@ log = logging.getLogger("homebot")
 def create_app() -> FastAPI:
     store = Store(settings.db_path, settings.household_id)
     service = HomeService(store)
+    drive = DriveService(settings, store)
     state: dict = {"tg_app": None, "platform": None, "ready": False}
 
     @asynccontextmanager
@@ -51,6 +54,19 @@ def create_app() -> FastAPI:
             await store.attach_memory(settings)
         except Exception:
             log.exception("memory engine attach failed — continuing with lexical fallback")
+
+        stored_google_refresh = await store.get_setting("google_refresh_token")
+        if (
+            settings.google_client_id
+            and settings.google_client_secret
+            and (settings.google_refresh_token or stored_google_refresh)
+        ):
+            try:
+                await drive.ensure_root()
+            except Exception:
+                log.exception(
+                    "Google Drive root initialization failed — files section remains unavailable"
+                )
 
         tg_app = build_application(settings, store, service)
         platform = tg_app.bot_data["telegram_platform"]
@@ -112,6 +128,7 @@ def create_app() -> FastAPI:
 
         app.state.store = store
         app.state.service = service
+        app.state.drive = drive
         app.state.tg_app = tg_app
         app.state.telegram_platform = platform
         state["ready"] = True
@@ -126,6 +143,7 @@ def create_app() -> FastAPI:
 
     api = FastAPI(title="Shared Home Bot", version="3.0.0", lifespan=lifespan)
     api.include_router(build_api_router(settings, store, service))
+    api.include_router(build_files_router(settings, store, drive))
 
     @api.middleware("http")
     async def request_context(request: Request, call_next):
@@ -153,6 +171,7 @@ def create_app() -> FastAPI:
             "mode": "webhook" if settings.webhook_url else "polling",
             "mini_app": bool(settings.resolved_mini_app_url),
             "telegram_platform": "v3",
+            "files": True,
         }
 
     @api.get("/health/live")
@@ -274,11 +293,13 @@ def create_app() -> FastAPI:
                 status_code=400,
             )
         await store.set_setting("google_refresh_token", refresh)
+        settings.google_refresh_token = refresh
+        drive.reset_credentials()
         log.info("google oauth: refresh token stored (len=%s)", len(refresh))
         return Response(
             content=(
                 "<html><body style='font-family:system-ui;padding:2rem'>"
-                "<h2>✅ Google מחובר</h2><p>אפשר לסגור את הדף. Alfred ישלים מכאן.</p>"
+                "<h2>✅ Google מחובר</h2><p>אפשר לסגור את הדף. Shared Home Bot ישלים מכאן.</p>"
                 "</body></html>"
             ),
             media_type="text/html",
