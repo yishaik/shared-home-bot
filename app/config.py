@@ -54,6 +54,20 @@ class Settings(BaseSettings):
     app_session_secret: str = Field(default="", alias="APP_SESSION_SECRET")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
+    # External web research (FastCRW hosted API or a self-hosted compatible server)
+    fastcrw_api_key: str = Field(default="", alias="CRW_API_KEY")
+    fastcrw_api_url: str = Field(default="https://api.fastcrw.com", alias="CRW_API_URL")
+    fastcrw_timeout_seconds: float = Field(default=30, ge=5, le=60, alias="CRW_TIMEOUT_SECONDS")
+    fastcrw_max_content_chars: int = Field(default=16000, ge=2000, le=50000, alias="CRW_MAX_CONTENT_CHARS")
+
+    # Static website publishing through here.now
+    herenow_api_key: str = Field(default="", alias="HERENOW_API_KEY")
+    herenow_api_url: str = Field(default="https://here.now", alias="HERENOW_API_URL")
+    herenow_account: str = Field(default="", alias="HERENOW_ACCOUNT")
+    herenow_timeout_seconds: float = Field(default=30, ge=5, le=60, alias="HERENOW_TIMEOUT_SECONDS")
+    herenow_max_files: int = Field(default=12, ge=1, le=30, alias="HERENOW_MAX_FILES")
+    herenow_max_site_kb: int = Field(default=256, ge=16, le=2048, alias="HERENOW_MAX_SITE_KB")
+
     proactive_enabled: bool = Field(default=True, alias="PROACTIVE_ENABLED")
     brief_time: str = Field(default="08:00", alias="BRIEF_TIME")
     quiet_hours: str = Field(default="22:30-07:30", alias="QUIET_HOURS")
@@ -146,6 +160,15 @@ class Settings(BaseSettings):
     @property
     def effective_session_secret(self) -> str:
         return self.app_session_secret or self.telegram_bot_token
+
+    @property
+    def fastcrw_enabled(self) -> bool:
+        hosted = self.fastcrw_api_url.rstrip("/") == "https://api.fastcrw.com"
+        return bool(self.fastcrw_api_url and (self.fastcrw_api_key or not hosted))
+
+    @property
+    def herenow_enabled(self) -> bool:
+        return bool(self.herenow_api_key and self.herenow_api_url)
 
     @property
     def google_enabled(self) -> bool:
