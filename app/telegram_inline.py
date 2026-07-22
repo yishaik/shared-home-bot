@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import hmac
 import logging
 import time
 from dataclasses import dataclass
@@ -116,6 +117,13 @@ class InlineShareService:
             if self._schema_ready:
                 return
             await self.store.db.executescript(INLINE_USAGE_SCHEMA)
+            retention_cutoff = (
+                time.time() - self.settings.telegram_inline_usage_retention_days * 86400
+            )
+            await self.store.db.execute(
+                "DELETE FROM telegram_inline_usage WHERE chosen_at < ?",
+                (retention_cutoff,),
+            )
             await self.store.db.commit()
             self._schema_ready = True
 
@@ -203,7 +211,11 @@ class InlineShareService:
         if not self.actor_may_use(actor_id) or not result_id.startswith("sh:"):
             return
         await self.ensure_schema()
-        query_hash = hashlib.sha256((query or "").encode("utf-8")).hexdigest()[:24]
+        query_hash = hmac.new(
+            self.settings.effective_session_secret.encode("utf-8"),
+            (query or "").encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()[:24]
         await self.store.db.execute(
             """INSERT INTO telegram_inline_usage(
                    telegram_user_id, result_id, result_kind, query_hash, chosen_at
