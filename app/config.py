@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     telegram_enable_ephemeral_messages: bool = Field(default=False, alias="TELEGRAM_ENABLE_EPHEMERAL_MESSAGES")
     telegram_enable_rich_messages: bool = Field(default=False, alias="TELEGRAM_ENABLE_RICH_MESSAGES")
     telegram_bot_api_base_url: str = Field(default="https://api.telegram.org", alias="TELEGRAM_BOT_API_BASE_URL")
+    telegram_inline_enabled: bool = Field(default=True, alias="TELEGRAM_INLINE_ENABLED")
+    telegram_inline_max_results: int = Field(default=20, alias="TELEGRAM_INLINE_MAX_RESULTS")
+    telegram_inline_cache_seconds: int = Field(default=3, alias="TELEGRAM_INLINE_CACHE_SECONDS")
 
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     openai_model: str = Field(default="gpt-4o", alias="OPENAI_MODEL")
@@ -96,6 +99,16 @@ class Settings(BaseSettings):
     @classmethod
     def validate_concurrency(cls, value: int) -> int:
         return max(1, min(int(value), 64))
+
+    @field_validator("telegram_inline_max_results")
+    @classmethod
+    def validate_inline_max_results(cls, value: int) -> int:
+        return max(1, min(int(value), 50))
+
+    @field_validator("telegram_inline_cache_seconds")
+    @classmethod
+    def validate_inline_cache_seconds(cls, value: int) -> int:
+        return max(0, min(int(value), 300))
 
     @property
     def resolved_public_url(self) -> str:
