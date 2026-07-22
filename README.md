@@ -1,6 +1,6 @@
 # Shared Home Bot 2.0
 
-A premium shared-home experience inside Telegram: natural-language assistant plus a secure Telegram Mini App for shopping, tasks, events, household files, activity and settings.
+A premium shared-home experience inside Telegram: natural-language assistant plus a secure Telegram Mini App for shopping, connected projects and tasks, events, household files, activity and settings.
 
 ## Product model
 
@@ -8,14 +8,19 @@ A premium shared-home experience inside Telegram: natural-language assistant plu
 - **Mini App** for visual overview, editing and household coordination.
 - **One service layer and one database** shared by the bot, AI tools and REST API.
 - **Dedicated Google account** for Calendar, Docs, Sheets and a managed household Drive folder.
+- **Optional web capabilities** through FastCRW for search/scraping and here.now for static website publishing.
 - **Private by default** with Telegram Mini App signature validation, signed sessions, membership checks, Drive-root boundary checks and webhook secret validation.
 
 ## Main capabilities
 
 - Premium Hebrew-first, RTL Mini App with Telegram theme support.
-- Home dashboard, shopping mode, tasks, structured events, shared files, activity feed and household settings.
+- Home dashboard, shopping mode, projects, connected tasks, structured events, shared files, activity feed and household settings.
+- Project/task relationships, assignees, deadlines, work blocks, Drive resources and durable assignment notifications.
 - Shared Google Drive browser with folder navigation, uploads, folder creation, direct Drive links and deletion.
 - Inherited Google access: share the managed root folder once and all app-created children inherit access.
+- Secure Telegram Inline sharing for approved users, with private fields redacted.
+- Public-web search, URL reading and lightweight site mapping through FastCRW.
+- Small static website creation and updates through here.now, with optional password protection.
 - Inline Telegram actions with completion and undo.
 - Shared memory, notes, inventory and people through the AI assistant.
 - Proactive engine: scheduled reminders (one-off/daily/weekly, personal or household-wide),
@@ -47,6 +52,25 @@ npm run dev
 
 The Mini App must normally be opened from Telegram because the backend validates `Telegram.WebApp.initData`.
 
+## Web research and website publishing
+
+FastCRW is exposed to the model through three bounded tools:
+
+- `web_search` — current public-web discovery.
+- `web_read` — one public URL converted to clean markdown, optionally with links.
+- `web_map` — lightweight URL discovery within a site.
+
+Configure the hosted API with `CRW_API_KEY`. A self-hosted compatible server can be selected with `CRW_API_URL`; authentication is optional only when that server permits it. Scraped content is clipped before it is returned to the model, and local/private network URLs are rejected.
+
+here.now is exposed through:
+
+- `site_publish` — create a new static site or update an existing slug.
+- `site_list` — list sites owned by the configured account or workspace.
+
+The publisher accepts UTF-8 text assets only, requires `index.html`, enforces file-count and total-size limits, rejects traversal and the reserved `.herenow` directory, and never returns presigned upload URLs to the model. Sites are public by default; the tool can add a server-enforced password when one is explicitly supplied. Use a dedicated revocable `HERENOW_API_KEY`, and set `HERENOW_ACCOUNT` only when publishing into a workspace.
+
+The assistant treats all scraped page content as untrusted data rather than instructions, cites source URLs, and publishes only when the user explicitly asks to build or publish a site. Secrets and private household data must never be embedded in published files.
+
 ## Google account and Drive setup
 
 The runtime uses one dedicated Google account as the automation principal. Household members authenticate to the Mini App through Telegram; they do not grant the bot access to their personal Drives.
@@ -64,12 +88,12 @@ The default OAuth scope is `drive.file`, so the service manages files created or
 
 ## Railway deployment
 
-1. Deploy this repository as a Railway service.
+1. Deploy this repository as a Railway service from the `main` branch.
 2. Attach a persistent volume at `/data`.
-3. Add the variables from `.env.example`. Seal `TELEGRAM_BOT_TOKEN`, `OPENAI_API_KEY`, `TELEGRAM_WEBHOOK_SECRET`, `APP_SESSION_SECRET` and the Google OAuth credentials.
+3. Add the variables from `.env.example`. Seal `TELEGRAM_BOT_TOKEN`, `OPENAI_API_KEY`, `TELEGRAM_WEBHOOK_SECRET`, `APP_SESSION_SECRET`, `CRW_API_KEY`, `HERENOW_API_KEY` and the Google OAuth credentials.
 4. Generate a public Railway domain. The app automatically derives its public URL from `RAILWAY_PUBLIC_DOMAIN`; explicit `PUBLIC_URL` and `MINI_APP_URL` remain available as overrides.
 5. Configure the service healthcheck as `/health/ready` (`railway.json` already includes it).
-6. In BotFather, configure the bot's Main Mini App URL as `https://YOUR_DOMAIN/app` and add screenshots/preview media.
+6. In BotFather, configure the bot's Main Mini App URL as `https://YOUR_DOMAIN/app`, enable `/setinline`, and add screenshots/preview media.
 7. Start the bot. It configures the Telegram menu button and webhook automatically.
 
 ## Required variables
@@ -87,17 +111,29 @@ GOOGLE_CLIENT_SECRET=...
 GOOGLE_DRIVE_SHARED_EMAILS=member1@gmail.com,member2@gmail.com
 ```
 
+Optional web integrations:
+
+```env
+CRW_API_KEY=...
+CRW_API_URL=https://api.fastcrw.com
+HERENOW_API_KEY=...
+HERENOW_API_URL=https://here.now
+HERENOW_ACCOUNT=
+```
+
 `ALLOWED_USER_IDS` is fail-closed: the service will not start without at least one allowed Telegram user.
 
 ## API
 
-Authenticated Mini App endpoints:
+Authenticated Mini App endpoints include:
 
 - `POST /api/auth/telegram`
 - `GET /api/home`
 - `GET|POST|PATCH|DELETE /api/shopping`
+- `GET|POST|PATCH|DELETE /api/projects`
 - `GET|POST|PATCH|DELETE /api/tasks`
-- `GET|POST|DELETE /api/events`
+- task relationship, calendar-block and resource endpoints
+- `GET|POST|PATCH|DELETE /api/events`
 - `GET /api/activity`
 - `GET|PATCH /api/household`
 - `GET /api/memory`
