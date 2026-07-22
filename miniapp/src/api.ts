@@ -36,7 +36,9 @@ export const api = {
   updateShopping: (id: number, patch: Partial<ShoppingItem>) => request<ShoppingItem>(`/api/shopping/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteShopping: (id: number) => request<void>(`/api/shopping/${id}`, { method: 'DELETE' }),
   tasks: () => request<Todo[]>('/api/tasks'),
-  addTask: (title: string, priority: Todo['priority'] = 'normal') => request<Todo>('/api/tasks', { method: 'POST', body: JSON.stringify({ title, priority }) }),
+  addTask: (title: string, priority: Todo['priority'] = 'normal', assignedTo?: number, dueAt?: string) => request<Todo>('/api/tasks', {
+    method: 'POST', body: JSON.stringify({ title, priority, assigned_to: assignedTo, due_at: dueAt }),
+  }),
   updateTask: (id: number, patch: Partial<Todo>) => request<Todo>(`/api/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteTask: (id: number) => request<void>(`/api/tasks/${id}`, { method: 'DELETE' }),
   events: () => request<HomeEvent[]>('/api/events'),
