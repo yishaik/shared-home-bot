@@ -48,7 +48,7 @@ export const api = {
   addShopping: (item: string, qty = '1', category = '') => request<ShoppingItem>('/api/shopping', { method: 'POST', body: JSON.stringify({ item, qty, category }) }),
   updateShopping: (id: number, patch: Partial<ShoppingItem>) => request<ShoppingItem>(`/api/shopping/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteShopping: (id: number) => request<void>(`/api/shopping/${id}`, { method: 'DELETE' }),
-  tasks: () => request<Todo[]>('/api/tasks'),
+  tasks: (includeDone = false) => request<Todo[]>(includeDone ? '/api/tasks?include_done=true' : '/api/tasks'),
   addTask: (title: string, priority: Todo['priority'] = 'normal', assignedTo?: number, dueAt?: string) => request<Todo>('/api/tasks', {
     method: 'POST', body: JSON.stringify({ title, priority, assigned_to: assignedTo, due_at: dueAt }),
   }),
