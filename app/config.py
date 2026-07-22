@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     telegram_admin_user_ids: list[int] = Field(default_factory=list, alias="TELEGRAM_ADMIN_USER_IDS")
     telegram_allow_unlisted_groups: bool = Field(default=False, alias="TELEGRAM_ALLOW_UNLISTED_GROUPS")
     telegram_group_response_mode: str = Field(default="mention_or_topic", alias="TELEGRAM_GROUP_RESPONSE_MODE")
+    telegram_group_allow_private_context: bool = Field(default=False, alias="TELEGRAM_GROUP_ALLOW_PRIVATE_CONTEXT")
     telegram_allow_topic_creation: bool = Field(default=True, alias="TELEGRAM_ALLOW_TOPIC_CREATION")
     telegram_enable_private_topics: bool = Field(default=True, alias="TELEGRAM_ENABLE_PRIVATE_TOPICS")
     telegram_concurrent_updates: int = Field(default=16, alias="TELEGRAM_CONCURRENT_UPDATES")
