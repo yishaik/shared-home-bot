@@ -220,7 +220,10 @@ async def on_inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     service: InlineShareService = context.application.bot_data["inline_share_service"]
     actor_id = inline_query.from_user.id
     if not service.actor_may_use(actor_id):
-        await inline_query.answer([], cache_time=1, is_personal=True)
+        try:
+            await inline_query.answer([], cache_time=1, is_personal=True)
+        except TelegramError:
+            log.debug("could not answer denied inline query query_id=%s", inline_query.id)
         return
 
     try:
@@ -250,11 +253,15 @@ async def on_chosen_inline_result(update: Update, context: ContextTypes.DEFAULT_
     if not chosen:
         return
     service: InlineShareService = context.application.bot_data["inline_share_service"]
-    await service.record_chosen(
-        actor_id=chosen.from_user.id,
-        result_id=chosen.result_id,
-        query=chosen.query,
-    )
+    try:
+        await service.record_chosen(
+            actor_id=chosen.from_user.id,
+            result_id=chosen.result_id,
+            query=chosen.query,
+        )
+    except Exception:
+        # Usage telemetry is optional and must never fail Telegram update handling.
+        log.exception("chosen inline telemetry failed user_id=%s", chosen.from_user.id)
 
 
 def install_inline_handlers(application: Application, settings: Settings, store: Store) -> None:
