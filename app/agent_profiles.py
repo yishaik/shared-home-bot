@@ -78,7 +78,7 @@ class AgentRouter:
         return self.profiles.get(agent_id or "", self.profiles["coordinator"])
 
     async def select(self, envelope: TelegramEnvelope, text: str) -> AgentProfile:
-        bound = await self.telegram_store.topic_agent(envelope.chat_id, envelope.thread_id)
+        bound = await self.telegram_store.topic_agent(envelope.chat_id, envelope.topic_id)
         if bound in self.profiles:
             return self.profiles[bound]
 
