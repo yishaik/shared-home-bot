@@ -59,7 +59,6 @@ def calendar_add(settings, *, summary: str, start: str, end: str | None = None,
     svc = _service(settings, "calendar", "v3")
     tz = settings.household_timezone
     if all_day:
-        # start/end are YYYY-MM-DD; Google's end date is exclusive.
         body: dict[str, Any] = {"summary": summary, "start": {"date": start}, "end": {"date": end or start}}
     else:
         body = {
@@ -179,8 +178,6 @@ def doc_list(settings, *, max_results: int = 20) -> list[dict[str, Any]]:
 
 
 # ── Sheets ────────────────────────────────────────────────────────────────
-# drive.file scope covers the Sheets API for spreadsheets this app creates —
-# no extra scope / re-consent needed. Requires the Sheets API to be enabled.
 def _sheet_url(sheet_id: str) -> str:
     return f"https://docs.google.com/spreadsheets/d/{sheet_id}/edit"
 
@@ -225,3 +222,64 @@ def sheet_list(settings, *, max_results: int = 20) -> list[dict[str, Any]]:
     ).execute()
     return [{"id": f["id"], "title": f.get("name", ""), "modified": f.get("modifiedTime"),
              "url": f.get("webViewLink") or _sheet_url(f["id"])} for f in res.get("files", [])]
+
+
+# ── Drive project resources ───────────────────────────────────────────────
+def drive_create_folder(
+    settings,
+    *,
+    name: str,
+    parent_id: str = "",
+    app_properties: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    drive = _service(settings, "drive", "v3")
+    body: dict[str, Any] = {
+        "name": name,
+        "mimeType": "application/vnd.google-apps.folder",
+        "appProperties": app_properties or {},
+    }
+    if parent_id:
+        body["parents"] = [parent_id]
+    folder = drive.files().create(
+        body=body,
+        fields="id,name,webViewLink,parents",
+    ).execute()
+    return {
+        "id": folder["id"],
+        "name": folder.get("name", name),
+        "url": folder.get("webViewLink") or f"https://drive.google.com/drive/folders/{folder['id']}",
+    }
+
+
+def drive_move_file(settings, *, file_id: str, folder_id: str) -> dict[str, Any]:
+    drive = _service(settings, "drive", "v3")
+    current = drive.files().get(fileId=file_id, fields="id,parents").execute()
+    old_parents = ",".join(current.get("parents", []))
+    moved = drive.files().update(
+        fileId=file_id,
+        addParents=folder_id,
+        removeParents=old_parents or None,
+        fields="id,name,mimeType,webViewLink,parents",
+    ).execute()
+    return {
+        "id": moved["id"],
+        "name": moved.get("name", ""),
+        "mime_type": moved.get("mimeType", ""),
+        "url": moved.get("webViewLink", ""),
+    }
+
+
+def drive_get_file(settings, *, file_id: str) -> dict[str, Any]:
+    drive = _service(settings, "drive", "v3")
+    item = drive.files().get(
+        fileId=file_id,
+        fields="id,name,mimeType,webViewLink,parents,appProperties",
+    ).execute()
+    return {
+        "id": item["id"],
+        "name": item.get("name", ""),
+        "mime_type": item.get("mimeType", ""),
+        "url": item.get("webViewLink", ""),
+        "parents": item.get("parents", []),
+        "app_properties": item.get("appProperties", {}),
+    }
