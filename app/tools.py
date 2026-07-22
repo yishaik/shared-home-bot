@@ -7,6 +7,7 @@ from app.calendar_service import CalendarService
 from app.store_v2 import Store
 from app.services import HomeService
 from app.google_tools import GOOGLE_TOOL_SPECS, GOOGLE_TOOL_NAMES, run_google_tool
+from app.web_tools import WEB_TOOL_NAMES, run_web_tool, web_tool_specs
 
 
 def _tool(name: str, description: str, properties: dict, required: list[str] | None = None) -> dict:
@@ -57,13 +58,20 @@ TOOL_SPECS: list[dict[str, Any]] = [
 
 
 def tool_specs(settings=None) -> list[dict[str, Any]]:
+    specs = list(TOOL_SPECS)
     if settings is not None and getattr(settings, "google_enabled", False):
-        return [*TOOL_SPECS, *GOOGLE_TOOL_SPECS]
-    return TOOL_SPECS
+        specs.extend(GOOGLE_TOOL_SPECS)
+    if settings is not None:
+        specs.extend(web_tool_specs(settings))
+    return specs
 
 
 async def run_tool(store: Store, service: HomeService, name: str, arguments: dict[str, Any], user_id: int | None, settings=None) -> str:
     actor = int(user_id or 0)
+    if name in WEB_TOOL_NAMES:
+        if settings is None:
+            return json.dumps({"ok": False, "error": "Web integrations are not configured"}, ensure_ascii=False)
+        return await run_web_tool(settings, name, arguments)
     if name in GOOGLE_TOOL_NAMES:
         if settings is None or not getattr(settings, "google_enabled", False):
             return json.dumps({"ok": False, "error": "Google integration is not configured"}, ensure_ascii=False)
