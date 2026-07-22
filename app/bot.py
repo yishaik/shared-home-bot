@@ -10,7 +10,10 @@ from telegram.error import TelegramError
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from app.agent import HomeAgent
+from app.calendar_service import CalendarService
 from app.config import Settings
+from app.household_work_service import HouseholdWorkService
+from app.member_service import MemberService
 from app.store_v2 import Store
 from app.services import HomeService
 
@@ -28,7 +31,6 @@ def _app_keyboard(settings: Settings) -> InlineKeyboardMarkup | None:
 
 
 async def _set_reaction_safely(message: Message, reaction: ReactionEmoji, *, is_big: bool = False) -> None:
-    """Set a best-effort status reaction without interrupting message handling."""
     try:
         await message.set_reaction(reaction=reaction, is_big=is_big)
     except TelegramError as exc:
@@ -51,20 +53,39 @@ async def _authorized(update: Update, settings: Settings) -> bool:
     return False
 
 
+async def _touch_member(update: Update, store: Store, *, started: bool = False) -> None:
+    user = update.effective_user
+    message = update.effective_message
+    if not user:
+        return
+    chat_id = None
+    if message and message.chat and str(message.chat.type) == "private":
+        chat_id = message.chat_id
+    await MemberService(store).touch(
+        user.id,
+        user.full_name,
+        user.username or "",
+        private_chat_id=chat_id,
+        started=started,
+    )
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     settings: Settings = context.application.bot_data["settings"]
     store: Store = context.application.bot_data["store"]
     user = update.effective_user
     if not user or not await _authorized(update, settings):
         return
-    await store.upsert_member_profile(user.id, user.full_name, user.username or "")
+    await _touch_member(update, store, started=True)
     text = (
         f"<b>ברוך הבא ל־{settings.home_name}</b> 🏠\n\n"
-        "כאן מנהלים יחד קניות, משימות, אירועים, מידע חשוב וכל מה שצריך כדי שהבית יעבוד בשקט.\n\n"
+        "כאן מנהלים יחד קניות, פרויקטים, משימות, אירועים, מידע חשוב וקבצי עבודה.\n\n"
         "אפשר פשוט לכתוב לי:\n"
         "• הוסף חלב לרשימת הקניות\n"
-        "• תזכיר לנו להזמין אינסטלטור ביום חמישי\n"
-        "• מה צריך לעשות השבוע?\n\n"
+        "• צור פרויקט מעבר דירה\n"
+        "• תוסיף משימה לקבל שלוש הצעות מחיר\n"
+        "• שריין שעה מחר למשימה\n"
+        "• מה קורה השבוע?\n\n"
         "לסקירה ועריכה נוחה, פתח את אפליקציית הבית."
     )
     await update.effective_message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=_app_keyboard(settings))
@@ -72,13 +93,15 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     settings: Settings = context.application.bot_data["settings"]
+    store: Store = context.application.bot_data["store"]
     if not await _authorized(update, settings):
         return
+    await _touch_member(update, store)
     await update.effective_message.reply_text(
         "אפשר לדבר איתי בשפה חופשית או להשתמש בקיצורים:\n"
         "/todos — משימות פתוחות\n"
         "/shop — רשימת קניות\n"
-        "/events — אירועים\n"
+        "/events — אירועים מיומן Google\n"
         "/memory — מידע שמור\n"
         "/app — פתיחת אפליקציית הבית",
         reply_markup=_app_keyboard(settings),
@@ -87,8 +110,10 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_app(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     settings: Settings = context.application.bot_data["settings"]
+    store: Store = context.application.bot_data["store"]
     if not await _authorized(update, settings):
         return
+    await _touch_member(update, store)
     keyboard = _app_keyboard(settings)
     if keyboard:
         await update.effective_message.reply_text("כל הבית, במקום אחד:", reply_markup=keyboard)
@@ -97,9 +122,15 @@ async def cmd_app(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_whoami(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    store: Store = context.application.bot_data["store"]
+    await _touch_member(update, store)
     user = update.effective_user
     if user:
-        await update.effective_message.reply_text(f"Telegram ID: <code>{user.id}</code>", parse_mode=ParseMode.HTML)
+        username = f" · @{html.escape(user.username)}" if user.username else ""
+        await update.effective_message.reply_text(
+            f"אתה מזוהה כ־<b>{html.escape(user.full_name)}</b>{username}",
+            parse_mode=ParseMode.HTML,
+        )
 
 
 async def cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -107,6 +138,7 @@ async def cmd_memory(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     store: Store = context.application.bot_data["store"]
     if not await _authorized(update, settings):
         return
+    await _touch_member(update, store)
     rows = await store.list_memories(limit=20)
     if not rows:
         await update.effective_message.reply_text("עדיין אין מידע שמור בבית.")
@@ -120,14 +152,23 @@ async def cmd_todos(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     store: Store = context.application.bot_data["store"]
     if not await _authorized(update, settings):
         return
-    rows = await store.list_todos(False)
+    await _touch_member(update, store)
+    work = HouseholdWorkService(settings, store)
+    rows = await work.list_tasks()
     if not rows:
         await update.effective_message.reply_text("אין משימות פתוחות ✓", reply_markup=_app_keyboard(settings))
         return
-    keyboard = [[InlineKeyboardButton(f"✓ {row['title'][:32]}", callback_data=f"todo_done:{row['id']}")] for row in rows[:8]]
+    keyboard = []
+    for row in rows[:8]:
+        prefix = "🔒" if row.get("blocked") else "✓"
+        keyboard.append([InlineKeyboardButton(f"{prefix} {row['title'][:30]}", callback_data=f"todo_done:{row['id']}")])
     if settings.resolved_mini_app_url:
         keyboard.append([InlineKeyboardButton("כל המשימות", web_app=WebAppInfo(url=f"{settings.resolved_mini_app_url}?tab=tasks"))])
-    await update.effective_message.reply_text("✅ <b>משימות פתוחות</b>\nלחץ לסימון כהושלם:", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(keyboard))
+    await update.effective_message.reply_text(
+        "✅ <b>משימות פתוחות</b>\nלחץ לסימון כהושלם:",
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
 
 
 async def cmd_shop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -135,6 +176,7 @@ async def cmd_shop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     store: Store = context.application.bot_data["store"]
     if not await _authorized(update, settings):
         return
+    await _touch_member(update, store)
     rows = await store.shop_list(False)
     if not rows:
         await update.effective_message.reply_text("רשימת הקניות ריקה 🛒", reply_markup=_app_keyboard(settings))
@@ -150,33 +192,55 @@ async def cmd_events(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     store: Store = context.application.bot_data["store"]
     if not await _authorized(update, settings):
         return
-    rows = await store.list_events()
+    await _touch_member(update, store)
+    calendar = CalendarService(settings, store)
+    if settings.google_enabled:
+        try:
+            await calendar.incremental_sync()
+        except Exception:
+            log.exception("calendar sync failed in /events")
+    rows = await calendar.list_events()
     if not rows:
-        await update.effective_message.reply_text("אין אירועים שמורים.", reply_markup=_app_keyboard(settings))
+        await update.effective_message.reply_text("אין אירועים קרובים ביומן המשותף.", reply_markup=_app_keyboard(settings))
         return
-    lines = [f"• <b>{html.escape(str(row['title']))}</b> — {html.escape(str(row.get('start_at') or row.get('when_text') or ''))}" for row in rows[:12]]
+    lines = []
+    for row in rows[:12]:
+        start = html.escape(str(row.get("start_at") or ""))
+        end = html.escape(str(row.get("end_at") or ""))
+        when = f"{start} → {end}" if end else start
+        lines.append(f"• <b>{html.escape(str(row['title']))}</b> — {when}")
     await update.effective_message.reply_text("📅 <b>אירועים</b>\n" + "\n".join(lines), parse_mode=ParseMode.HTML, reply_markup=_app_keyboard(settings))
 
 
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     settings: Settings = context.application.bot_data["settings"]
+    store: Store = context.application.bot_data["store"]
     service: HomeService = context.application.bot_data["service"]
     query = update.callback_query
     user = update.effective_user
     if not query or not user or not _is_allowed(settings, user.id):
         return
+    await _touch_member(update, store)
     await query.answer()
     action, _, raw_id = (query.data or "").partition(":")
     try:
         entity_id = int(raw_id)
     except ValueError:
         return
+    work = HouseholdWorkService(settings, store)
     if action == "todo_done":
-        item = await service.update_todo(user.id, entity_id, done=True)
+        item = await work.update_task(user.id, entity_id, status="completed")
         if item:
-            await query.edit_message_text(f"✓ הושלמה: {item['title']}", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("ביטול", callback_data=f"todo_undo:{entity_id}")]]))
+            await query.edit_message_text(
+                f"✓ הושלמה: {item['title']}",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("ביטול", callback_data=f"todo_undo:{entity_id}")]]),
+            )
+    elif action == "todo_start":
+        item = await work.update_task(user.id, entity_id, status="in_progress")
+        if item:
+            await query.edit_message_text(f"▶ התחלת לעבוד על: {item['title']}")
     elif action == "todo_undo":
-        item = await service.update_todo(user.id, entity_id, done=False)
+        item = await work.update_task(user.id, entity_id, status="todo")
         if item:
             await query.edit_message_text(f"↩ המשימה הוחזרה: {item['title']}")
     elif action == "shop_done":
@@ -191,12 +255,14 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     settings: Settings = context.application.bot_data["settings"]
+    store: Store = context.application.bot_data["store"]
     agent: HomeAgent = context.application.bot_data["agent"]
     user = update.effective_user
     message = update.effective_message
     if not user or not message or not message.text or not await _authorized(update, settings):
         return
 
+    await _touch_member(update, store, started=True)
     await context.bot.send_chat_action(chat_id=message.chat_id, action=ChatAction.TYPING)
     await _set_reaction_safely(message, ReactionEmoji.EYES)
     progress = await message.reply_text("מטפל בזה…")
