@@ -92,25 +92,26 @@ class TelegramStore:
         if update_id < 0:
             return True
         now = time.time()
-        row = await (
-            await self.store.db.execute(
-                "SELECT status, updated_at FROM telegram_updates WHERE update_id=?", (update_id,)
-            )
-        ).fetchone()
-        if row and row["status"] == "done":
-            return False
-        if row and row["status"] == "processing" and now - float(row["updated_at"]) < 120:
-            return False
-        await self.store.db.execute(
-            """INSERT INTO telegram_updates(update_id, status, attempts, received_at, updated_at)
-               VALUES(?, 'processing', 1, ?, ?)
-               ON CONFLICT(update_id) DO UPDATE SET
-                 status='processing', attempts=telegram_updates.attempts+1,
-                 last_error='', updated_at=excluded.updated_at""",
+        inserted = await self.store.db.execute(
+            """INSERT OR IGNORE INTO telegram_updates(
+                   update_id, status, attempts, received_at, updated_at
+               ) VALUES(?, 'processing', 1, ?, ?)""",
             (update_id, now, now),
         )
+        if inserted.rowcount > 0:
+            await self.store.db.commit()
+            return True
+
+        claimed = await self.store.db.execute(
+            """UPDATE telegram_updates SET
+                   status='processing', attempts=attempts+1, last_error='', updated_at=?
+               WHERE update_id=?
+                 AND status!='done'
+                 AND (status!='processing' OR updated_at<?)""",
+            (now, update_id, now - 120),
+        )
         await self.store.db.commit()
-        return True
+        return claimed.rowcount > 0
 
     async def complete_update(self, update_id: int) -> None:
         if update_id < 0:
@@ -182,19 +183,20 @@ class TelegramStore:
         name: str = "",
         icon_custom_emoji_id: str | None = None,
         created_by: int | None = None,
-        status: str = "open",
+        status: str | None = None,
     ) -> None:
         now = time.time()
         await self.store.db.execute(
             """INSERT INTO telegram_topics(
                    chat_id, thread_id, name, icon_custom_emoji_id, status,
                    created_by, created_at, updated_at
-               ) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+               ) VALUES(?, ?, ?, ?, COALESCE(?, 'open'), ?, ?, ?)
                ON CONFLICT(chat_id, thread_id) DO UPDATE SET
                  name=CASE WHEN excluded.name='' THEN telegram_topics.name ELSE excluded.name END,
                  icon_custom_emoji_id=COALESCE(excluded.icon_custom_emoji_id, telegram_topics.icon_custom_emoji_id),
-                 status=excluded.status, updated_at=excluded.updated_at""",
-            (chat_id, thread_id, name, icon_custom_emoji_id, status, created_by, now, now),
+                 status=CASE WHEN ? IS NULL THEN telegram_topics.status ELSE excluded.status END,
+                 updated_at=excluded.updated_at""",
+            (chat_id, thread_id, name, icon_custom_emoji_id, status, created_by, now, now, status),
         )
         await self.store.db.commit()
 
