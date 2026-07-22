@@ -1,6 +1,6 @@
 export type Household = { id: string; name: string; timezone: string }
 export type Member = { telegram_user_id: number; display_name: string; username: string; role: string }
-export type Todo = { id: number; title: string; done: number; assigned_to?: number | null; due_at?: string | null; priority: 'low' | 'normal' | 'high' }
+export type Todo = { id: number; title: string; done: number; done_at?: number | null; assigned_to?: number | null; due_at?: string | null; priority: 'low' | 'normal' | 'high' }
 export type ShoppingItem = { id: number; item: string; qty: string; category: string; done: number }
 export type HomeEvent = {
   id: string
