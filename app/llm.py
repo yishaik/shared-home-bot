@@ -93,6 +93,32 @@ def adapt_responses_output(response: Any) -> SimpleNamespace:
     return SimpleNamespace(choices=[SimpleNamespace(message=message)])
 
 
+def is_reasoning_model(model: str) -> bool:
+    """GPT-5.x and o-series are reasoning models served through the Responses API."""
+    m = (model or "").lower()
+    return m.startswith("gpt-5") or m.startswith(("o1", "o3", "o4"))
+
+
+async def _create_response(
+    client: Any,
+    *,
+    model: str,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None,
+    reasoning_effort: str | None,
+) -> Any:
+    """Native /v1/responses call, adapted back to the Chat-Completions shape.
+    No temperature (reasoning models reject it). Stateless: the full transcript is
+    resent each turn, so no server-side state / previous_response_id is needed."""
+    kwargs: dict[str, Any] = {"model": model, "input": to_responses_input(messages)}
+    if tools:
+        kwargs["tools"] = to_responses_tools(tools)
+    if reasoning_effort:
+        kwargs["reasoning"] = {"effort": reasoning_effort}
+    response = await client.responses.create(**kwargs)
+    return adapt_responses_output(response)
+
+
 async def create_completion(
     client: Any,
     *,
@@ -100,9 +126,16 @@ async def create_completion(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None = None,
     temperature: float = 0.2,
+    reasoning_effort: str = "low",
 ) -> Any:
-    """Chat Completions with a transparent Responses-API fallback for tool-using
-    reasoning models. The return value always exposes `.choices[0].message`."""
+    """Run one agent turn. Reasoning models (GPT-5.x/o-series) go straight to the
+    Responses API with a reasoning effort; other models use Chat Completions with a
+    transparent Responses fallback. The result always exposes `.choices[0].message`."""
+    if is_reasoning_model(model):
+        return await _create_response(
+            client, model=model, messages=messages, tools=tools, reasoning_effort=reasoning_effort
+        )
+
     kwargs: dict[str, Any] = {"model": model, "messages": messages, "temperature": temperature}
     if tools:
         kwargs["tools"] = tools
@@ -113,8 +146,6 @@ async def create_completion(
         if not needs_responses_fallback(exc):
             raise
         log.warning("model=%s rejects tools on chat.completions; falling back to Responses API", model)
-        resp_kwargs: dict[str, Any] = {"model": model, "input": to_responses_input(messages)}
-        if tools:
-            resp_kwargs["tools"] = to_responses_tools(tools)
-        response = await client.responses.create(**resp_kwargs)
-        return adapt_responses_output(response)
+        return await _create_response(
+            client, model=model, messages=messages, tools=tools, reasoning_effort=reasoning_effort
+        )
