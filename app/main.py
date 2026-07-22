@@ -93,7 +93,8 @@ def create_app() -> FastAPI:
             await tg_app.bot.set_chat_menu_button(menu_button=MenuButtonWebApp(text="הבית", web_app=WebAppInfo(url=settings.resolved_mini_app_url)))
 
         private_commands = [
-            BotCommand("start", "פתיחת הבית"), BotCommand("app", "אפליקציית הבית"),
+            BotCommand("start", "פתיחת הבית"), BotCommand("menu", "תפריט כפתורים"),
+            BotCommand("app", "אפליקציית הבית"),
             BotCommand("todos", "משימות ופרויקטים"), BotCommand("shop", "קניות"),
             BotCommand("events", "אירועים"), BotCommand("agents", "סוכנים זמינים"),
             BotCommand("topic", "יצירת נושא חדש"), BotCommand("topics", "רשימת נושאים"),

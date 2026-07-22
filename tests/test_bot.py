@@ -5,7 +5,33 @@ import pytest
 from telegram.constants import ReactionEmoji
 from telegram.error import BadRequest
 
-from app.bot import _set_reaction_safely
+from app.bot import BUTTON_ACTIONS, MENU_ACTIONS, _reply_keyboard, _set_reaction_safely
+
+
+def test_reply_keyboard_labels_are_all_routable() -> None:
+    settings = SimpleNamespace(resolved_mini_app_url="https://example/app")
+    keyboard = _reply_keyboard(settings)
+    labels = [button.text for row in keyboard.keyboard for button in row]
+    # Every tappable text label (all but the direct web_app button) has a handler.
+    text_labels = [label for label in labels if label != "🏠 אפליקציה"]
+    assert set(text_labels) == set(BUTTON_ACTIONS)
+    assert all(callable(handler) for handler in BUTTON_ACTIONS.values())
+    assert all(callable(handler) for handler in MENU_ACTIONS.values())
+
+
+def test_keyboard_and_menu_actions_do_not_duplicate() -> None:
+    from app.bot import cmd_menu
+
+    # The persistent keyboard's content actions and the inline "more" drawer must
+    # be disjoint (📋 תפריט only opens the drawer, so it is not a content action).
+    keyboard_content = {h for h in BUTTON_ACTIONS.values() if h is not cmd_menu}
+    assert keyboard_content.isdisjoint(MENU_ACTIONS.values())
+
+
+def test_reply_keyboard_hides_app_button_without_url() -> None:
+    keyboard = _reply_keyboard(SimpleNamespace(resolved_mini_app_url=""))
+    labels = [button.text for row in keyboard.keyboard for button in row]
+    assert "🏠 אפליקציה" not in labels
 
 
 @pytest.mark.asyncio

@@ -4,7 +4,15 @@ import html
 import logging
 import uuid
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update, WebAppInfo
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    Message,
+    ReplyKeyboardMarkup,
+    Update,
+    WebAppInfo,
+)
 from telegram.constants import ChatAction, ParseMode, ReactionEmoji
 from telegram.error import TelegramError
 from telegram.ext import (
@@ -32,6 +40,42 @@ def _app_keyboard(settings: Settings) -> InlineKeyboardMarkup | None:
         return None
     return InlineKeyboardMarkup(
         [[InlineKeyboardButton("🏠 פתיחת הבית", web_app=WebAppInfo(url=settings.resolved_mini_app_url))]]
+    )
+
+
+# Persistent bottom keyboard so the household never has to type / commands.
+# It holds the daily-frequent actions; everything else lives behind 📋 תפריט so
+# no action is duplicated across the two surfaces. Tapping a label sends its text,
+# which on_text routes to the matching action.
+def _reply_keyboard(settings: Settings) -> ReplyKeyboardMarkup:
+    rows = [
+        [KeyboardButton("🛒 קניות"), KeyboardButton("✅ משימות")],
+        [KeyboardButton("📅 אירועים"), KeyboardButton("📋 תפריט")],
+    ]
+    if settings.resolved_mini_app_url:
+        rows.append([KeyboardButton("🏠 אפליקציה", web_app=WebAppInfo(url=settings.resolved_mini_app_url))])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True, is_persistent=True)
+
+
+async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _authorized(update, context):
+        return
+    # Only the actions that are NOT on the persistent keyboard live here, so the
+    # two surfaces never duplicate. Daily actions (קניות/משימות/אירועים/אפליקציה)
+    # stay on the bottom keyboard.
+    rows = [
+        [
+            InlineKeyboardButton("🧠 זיכרון", callback_data="menu:memory"),
+            InlineKeyboardButton("🤖 סוכנים", callback_data="menu:agents"),
+        ],
+        [
+            InlineKeyboardButton("🗂 Topics", callback_data="menu:topics"),
+            InlineKeyboardButton("❓ עזרה", callback_data="menu:help"),
+        ],
+    ]
+    await update.effective_message.reply_text(
+        "עוד פעולות — הפעולות היומיומיות נמצאות בכפתורים שלמטה:",
+        reply_markup=InlineKeyboardMarkup(rows),
     )
 
 
@@ -74,18 +118,18 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await store.upsert_member_profile(user.id, user.full_name, user.username or "")
     text = (
         f"<b>ברוך הבא ל־{html.escape(settings.home_name)}</b> 🏠\n\n"
-        "אפשר לדבר איתי באופן טבעי בפרטי, בקבוצה או בתוך Topic. "
-        "כל Topic מקבל הקשר שיחה נפרד ויכול להיות מחובר לסוכן מומחה.\n\n"
+        "אפשר לדבר איתי באופן טבעי, או להשתמש בכפתורים שלמטה — בלי לזכור פקודות.\n\n"
         "דוגמאות:\n"
         "• הוסף חלב לרשימת הקניות\n"
         "• תזכיר לנו להזמין אינסטלטור ביום חמישי\n"
-        "• /topic תכנון החודש | calendar\n"
-        "• /agents — הצגת הסוכנים הזמינים"
+        "• 📋 תפריט — כל הפעולות במקום אחד"
     )
+    envelope = _platform(context).envelope(update)
+    reply_markup = _reply_keyboard(settings) if (envelope and envelope.is_private) else _app_keyboard(settings)
     await update.effective_message.reply_text(
         text,
         parse_mode=ParseMode.HTML,
-        reply_markup=_app_keyboard(settings),
+        reply_markup=reply_markup,
     )
 
 
@@ -94,7 +138,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     settings: Settings = context.application.bot_data["settings"]
     await update.effective_message.reply_text(
-        "אפשר לדבר איתי בשפה חופשית או להשתמש בפקודות:\n"
+        "אפשר לדבר איתי בשפה חופשית, להשתמש בכפתורים שלמטה, או ב־📋 /menu.\n\n"
+        "פקודות זמינות גם ידנית:\n"
         "/todos — משימות פתוחות\n"
         "/shop — רשימת קניות\n"
         "/events — אירועים\n"
@@ -416,6 +461,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
     await query.answer()
     action, _, raw_id = (query.data or "").partition(":")
+    if action == "menu":
+        handler = MENU_ACTIONS.get(raw_id)
+        if handler is not None:
+            await handler(update, context)
+        return
     try:
         entity_id = int(raw_id)
     except ValueError:
@@ -471,11 +521,35 @@ async def on_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await platform.set_chat_active(change.chat, status not in {"left", "kicked"})
 
 
+# Reply-keyboard labels → the handler they trigger. Kept next to the keyboard so
+# the two never drift apart. "🏠 אפליקציה" opens the Mini App directly (web_app),
+# so it never arrives here as text and needs no mapping.
+BUTTON_ACTIONS = {
+    "🛒 קניות": cmd_shop,
+    "✅ משימות": cmd_todos,
+    "📅 אירועים": cmd_events,
+    "📋 תפריט": cmd_menu,
+}
+
+# The "more" drawer behind 📋 תפריט — disjoint from the keyboard above (no dupes).
+MENU_ACTIONS = {
+    "memory": cmd_memory,
+    "agents": cmd_agents,
+    "topics": cmd_topics,
+    "help": cmd_help,
+}
+
+
 async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     platform = _platform(context)
     envelope = platform.envelope(update)
     message = update.effective_message
     if not envelope or not message or not envelope.text or not platform.is_authorized(envelope):
+        return
+    # Reply-keyboard taps are handled directly and kept out of the agent transcript.
+    handler = BUTTON_ACTIONS.get(envelope.text.strip())
+    if handler is not None:
+        await handler(update, context)
         return
     await platform.register_message(update, envelope)
     if not await platform.should_respond(envelope):
@@ -544,6 +618,7 @@ def build_application(settings: Settings, store: Store, service: HomeService) ->
 
     application.add_handler(CommandHandler("start", cmd_start))
     application.add_handler(CommandHandler("help", cmd_help))
+    application.add_handler(CommandHandler("menu", cmd_menu))
     application.add_handler(CommandHandler("app", cmd_app))
     application.add_handler(CommandHandler("whoami", cmd_whoami))
     application.add_handler(CommandHandler("chatid", cmd_chatid))
