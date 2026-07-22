@@ -53,7 +53,11 @@ def _reply_keyboard(settings: Settings) -> ReplyKeyboardMarkup:
         [KeyboardButton("📅 אירועים"), KeyboardButton("📋 תפריט")],
     ]
     if settings.resolved_mini_app_url:
-        rows.append([KeyboardButton("🏠 אפליקציה", web_app=WebAppInfo(url=settings.resolved_mini_app_url))])
+        # Plain label (not a keyboard web_app button): reply-keyboard web_app
+        # launches don't reliably pass Telegram initData, so the app fails auth.
+        # Routing to cmd_app opens it via an inline web_app button, the launch
+        # type that carries initData (same as the menu button).
+        rows.append([KeyboardButton("🏠 אפליקציה")])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True, is_persistent=True)
 
 
@@ -528,6 +532,7 @@ BUTTON_ACTIONS = {
     "🛒 קניות": cmd_shop,
     "✅ משימות": cmd_todos,
     "📅 אירועים": cmd_events,
+    "🏠 אפליקציה": cmd_app,
     "📋 תפריט": cmd_menu,
 }
 

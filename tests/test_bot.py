@@ -12,9 +12,10 @@ def test_reply_keyboard_labels_are_all_routable() -> None:
     settings = SimpleNamespace(resolved_mini_app_url="https://example/app")
     keyboard = _reply_keyboard(settings)
     labels = [button.text for row in keyboard.keyboard for button in row]
-    # Every tappable text label (all but the direct web_app button) has a handler.
-    text_labels = [label for label in labels if label != "🏠 אפליקציה"]
-    assert set(text_labels) == set(BUTTON_ACTIONS)
+    # Every keyboard label is a plain text button routed through BUTTON_ACTIONS
+    # (no keyboard web_app buttons — those don't carry Telegram initData).
+    assert all(button.web_app is None for row in keyboard.keyboard for button in row)
+    assert set(labels) == set(BUTTON_ACTIONS)
     assert all(callable(handler) for handler in BUTTON_ACTIONS.values())
     assert all(callable(handler) for handler in MENU_ACTIONS.values())
 
