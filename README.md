@@ -9,7 +9,7 @@ A premium shared-home experience inside Telegram: a topic-aware multi-agent assi
 - **Telegram Mini App** for visual overview, editing and household workflows.
 - **One service layer and one database** shared by the bot, agents, Mini App and REST API.
 - **Shared household state with isolated conversation context** per Telegram chat/topic.
-- **Private by default** with user and chat allow-lists, Telegram Mini App signature validation, signed sessions and webhook secret validation.
+- **Private by default** with user and chat allow-lists, group-safe context filtering, Telegram Mini App signature validation, signed sessions and webhook secret validation.
 
 ## Main capabilities
 
@@ -17,10 +17,11 @@ A premium shared-home experience inside Telegram: a topic-aware multi-agent assi
 - Private chats, groups, supergroups and forum/private-chat topics.
 - Create, list, rename, close, reopen and delete Telegram topics.
 - Bind a topic to a specialist agent or use automatic intent routing.
-- Scoped transcript and rolling summary per `chat_id + message_thread_id + agent_id`.
+- Scoped transcript and rolling summary per `chat_id + topic_id + agent_id`.
 - Configurable group attention modes: all, mentions, bound topics, or mention/topic hybrid.
+- Private memory, people, notes, settings and Google Docs/Sheets blocked in groups unless explicitly enabled.
 - Chat membership and topic lifecycle tracking.
-- Idempotent webhook processing with retry-safe update state.
+- Atomic idempotent webhook processing with retry-safe update state.
 - Inline Telegram actions with completion and undo.
 - Home dashboard, shopping mode, tasks, Google-backed events, activity feed and household settings.
 - Shared memory, notes, inventory and people through the AI tools.
@@ -72,9 +73,10 @@ The Mini App must normally be opened from Telegram because the backend validates
 2. Add approved groups/supergroups to `ALLOWED_CHAT_IDS`.
 3. Add topic administrators to `TELEGRAM_ADMIN_USER_IDS`.
 4. Keep `TELEGRAM_ALLOW_UNLISTED_GROUPS=false` unless broad group access is intentional.
-5. For ambient group operation, disable BotFather Privacy Mode or promote the bot to administrator.
-6. In forum groups, grant **Manage Topics**.
-7. Choose `TELEGRAM_GROUP_RESPONSE_MODE=mention_or_topic` as the recommended default.
+5. Keep `TELEGRAM_GROUP_ALLOW_PRIVATE_CONTEXT=false` unless every group member should see private household context.
+6. For ambient group operation, disable BotFather Privacy Mode or promote the bot to administrator.
+7. In forum groups, grant **Manage Topics**.
+8. Choose `TELEGRAM_GROUP_RESPONSE_MODE=mention_or_topic` as the recommended default.
 
 ## Railway deployment
 
@@ -95,6 +97,8 @@ TELEGRAM_WEBHOOK_SECRET=...
 ALLOWED_USER_IDS=111111111,222222222
 ALLOWED_CHAT_IDS=-1001234567890
 TELEGRAM_ADMIN_USER_IDS=111111111
+TELEGRAM_GROUP_RESPONSE_MODE=mention_or_topic
+TELEGRAM_GROUP_ALLOW_PRIVATE_CONTEXT=false
 OPENAI_API_KEY=...
 APP_SESSION_SECRET=...
 HOME_NAME=הבית שלנו
