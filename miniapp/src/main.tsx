@@ -4,6 +4,7 @@ import App from './App'
 import { initializeTelegram } from './telegram'
 import './styles.css'
 import './files.css'
+import './work.css'
 
 initializeTelegram()
 
