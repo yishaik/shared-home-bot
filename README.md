@@ -18,6 +18,10 @@ A premium shared-home experience inside Telegram: natural-language assistant plu
 - Inherited Google access: share the managed root folder once and all app-created children inherit access.
 - Inline Telegram actions with completion and undo.
 - Shared memory, notes, inventory and people through the AI assistant.
+- Proactive engine: scheduled reminders (one-off/daily/weekly, personal or household-wide),
+  pre-event calendar nudges, task due-time nudges, a daily morning brief and quiet hours.
+  Tunable at runtime via settings keys: `proactive_enabled`, `brief_time`, `quiet_hours`,
+  `calendar_nudge_minutes`, `brief_always`.
 - Structured activity/audit trail.
 - Backward-compatible SQLite extensions for household data.
 - Railway multi-stage Docker deployment with readiness healthcheck.

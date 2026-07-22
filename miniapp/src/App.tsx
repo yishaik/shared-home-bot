@@ -1,15 +1,16 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { api, authenticate } from './api'
+import { FilesPage } from './FilesPage'
 import { MemoryPanel } from './MemoryPanel'
 import { hapticSelection, hapticSuccess, tg } from './telegram'
 import type { Activity, Dashboard, HomeEvent, Household, ShoppingItem, Todo } from './types'
 
-type Tab = 'home' | 'shopping' | 'tasks' | 'events' | 'settings'
+type Tab = 'home' | 'shopping' | 'tasks' | 'events' | 'files' | 'settings'
 type Filter = 'all' | 'urgent' | 'dated'
 
 const tabFromUrl = (): Tab => {
   const value = new URLSearchParams(location.search).get('tab')
-  return ['shopping', 'tasks', 'events', 'settings'].includes(value || '') ? value as Tab : 'home'
+  return ['shopping', 'tasks', 'events', 'files', 'settings'].includes(value || '') ? value as Tab : 'home'
 }
 
 const dateText = (value?: string | null) => {
@@ -119,6 +120,7 @@ function App() {
         {tab === 'shopping' && <Shopping items={shopping} setItems={setShopping} onError={setError} />}
         {tab === 'tasks' && <Tasks items={tasks} members={dashboard?.members || []} setItems={setTasks} onError={setError} />}
         {tab === 'events' && <Events items={events} setItems={setEvents} onError={setError} />}
+        {tab === 'files' && <FilesPage onError={setError} />}
         {tab === 'settings' && household && <Settings household={household} setHousehold={setHousehold} activity={activity} onError={setError} />}
       </main>
       <nav className="bottom-nav" aria-label="ניווט ראשי">
@@ -126,6 +128,7 @@ function App() {
         <NavButton active={tab === 'shopping'} icon="🛒" label="קניות" count={shopping.length} onClick={() => navigate('shopping')} />
         <NavButton active={tab === 'tasks'} icon="✓" label="משימות" count={tasks.length} onClick={() => navigate('tasks')} />
         <NavButton active={tab === 'events'} icon="◷" label="אירועים" onClick={() => navigate('events')} />
+        <NavButton active={tab === 'files'} icon="📁" label="קבצים" onClick={() => navigate('files')} />
         <NavButton active={tab === 'settings'} icon="⚙" label="עוד" onClick={() => navigate('settings')} />
       </nav>
     </div>
