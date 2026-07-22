@@ -48,6 +48,7 @@ export function WorkPanel({ tasks, projects, members, setTasks, setProjects, onE
   const [filter, setFilter] = useState<TaskFilter>('open')
   const [projectFilter, setProjectFilter] = useState<number | ''>('')
   const [editing, setEditing] = useState<Todo | null>(null)
+  const [taskFormOpen, setTaskFormOpen] = useState(false)
 
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
@@ -84,6 +85,7 @@ export function WorkPanel({ tasks, projects, members, setTasks, setProjects, onE
       })
       setTasks([task, ...tasks])
       setTitle(''); setDescription(''); setAssignedTo(''); setDueAt(''); setProjectId(''); setPriority('normal')
+      setTaskFormOpen(false)
       hapticSuccess()
     } catch (error) { onError(String(error)) }
   }
@@ -192,27 +194,30 @@ export function WorkPanel({ tasks, projects, members, setTasks, setProjects, onE
         {!projects.length && <div className="empty-state"><span>◇</span><p>עוד אין פרויקטים</p></div>}
       </div>
     </> : <>
-      <form className="stack-form" onSubmit={addTask}>
-        <input value={title} onChange={event => setTitle(event.target.value)} placeholder="משימה חדשה…" />
-        <textarea value={description} onChange={event => setDescription(event.target.value)} placeholder="תיאור או תוצאה רצויה, לא חובה" />
-        <div className="form-row">
-          <select value={projectId} onChange={event => setProjectId(event.target.value)}>
-            <option value="">ללא פרויקט</option>
-            {projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
-          </select>
-          <select value={assignedTo} onChange={event => setAssignedTo(event.target.value)}>
-            <option value="">ללא אחראי</option>
-            {members.map(member => <option key={member.telegram_user_id} value={member.telegram_user_id}>{memberLabel(member)}</option>)}
-          </select>
-        </div>
-        <div className="form-row">
-          <select value={priority} onChange={event => setPriority(event.target.value as Todo['priority'])}>
-            <option value="normal">עדיפות רגילה</option><option value="high">דחוף</option><option value="low">נמוכה</option>
-          </select>
-          <input type="datetime-local" value={dueAt} onChange={event => setDueAt(event.target.value)} />
-        </div>
-        <button className="primary-button">הוספת משימה</button>
-      </form>
+      <details className="content-section" open={taskFormOpen} onToggle={event => setTaskFormOpen(event.currentTarget.open)}>
+        <summary style={{ cursor: 'pointer', fontWeight: 800 }}>＋ יצירת משימה חדשה</summary>
+        <form className="stack-form" style={{ marginTop: 12, boxShadow: 'none', padding: 0 }} onSubmit={addTask}>
+          <input value={title} onChange={event => setTitle(event.target.value)} placeholder="משימה חדשה…" />
+          <textarea value={description} onChange={event => setDescription(event.target.value)} placeholder="תיאור או תוצאה רצויה, לא חובה" />
+          <div className="form-row">
+            <select value={projectId} onChange={event => setProjectId(event.target.value)}>
+              <option value="">ללא פרויקט</option>
+              {projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
+            </select>
+            <select value={assignedTo} onChange={event => setAssignedTo(event.target.value)}>
+              <option value="">ללא אחראי</option>
+              {members.map(member => <option key={member.telegram_user_id} value={member.telegram_user_id}>{memberLabel(member)}</option>)}
+            </select>
+          </div>
+          <div className="form-row">
+            <select value={priority} onChange={event => setPriority(event.target.value as Todo['priority'])}>
+              <option value="normal">עדיפות רגילה</option><option value="high">דחוף</option><option value="low">נמוכה</option>
+            </select>
+            <input type="datetime-local" value={dueAt} onChange={event => setDueAt(event.target.value)} />
+          </div>
+          <button className="primary-button">הוספת משימה</button>
+        </form>
+      </details>
       <div className="filter-row">
         <select value={projectFilter} onChange={event => setProjectFilter(event.target.value ? Number(event.target.value) : '')}>
           <option value="">כל הפרויקטים</option>
