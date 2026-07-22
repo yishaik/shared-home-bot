@@ -8,7 +8,7 @@ export type HomeEvent = {
   title: string
   description?: string
   notes: string
-  when_text?: string
+  when_text: string
   start_at?: string | null
   end_at?: string | null
   location: string
