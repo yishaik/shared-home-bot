@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import json
 import logging
 from collections import defaultdict
 from typing import Any, Coroutine
+from zoneinfo import ZoneInfo
 
 from openai import AsyncOpenAI
 
@@ -21,6 +23,7 @@ from app.store_v2 import Store
 from app.telegram_models import TelegramEnvelope
 from app.telegram_store import TelegramStore
 from app.tools import run_tool, tool_specs
+from app.llm import create_completion
 
 
 log = logging.getLogger("homebot.telegram.agent")
@@ -157,6 +160,14 @@ class TelegramAgentRuntime:
     def _private_context_allowed(self, envelope: TelegramEnvelope) -> bool:
         return envelope.is_private or self.settings.telegram_group_allow_private_context
 
+    async def _members_line(self) -> str:
+        try:
+            members = await self.store.list_members()
+        except Exception:
+            return ""
+        names = [str(m.get("display_name") or m.get("username") or "").strip() for m in members]
+        return ", ".join(name for name in names if name)
+
     def _tool_specs_for(self, envelope: TelegramEnvelope) -> list[dict[str, Any]]:
         specs = tool_specs(self.settings)
         if self._private_context_allowed(envelope):
@@ -198,9 +209,15 @@ class TelegramAgentRuntime:
     ) -> str:
         snapshot = await self._snapshot_for_prompt(envelope, query)
         core = await self.store.get_core_memory() if self._private_context_allowed(envelope) else ""
+        try:
+            now_local = dt.datetime.now(ZoneInfo(self.settings.household_timezone))
+        except Exception:
+            now_local = dt.datetime.now(dt.timezone.utc)
         channel_context = (
             f"Telegram context: chat_type={envelope.chat_type}, chat_id={envelope.chat_id}, "
-            f"topic_id={envelope.topic_id or 'none'}, scope={envelope.scope_key}."
+            f"topic_id={envelope.topic_id or 'none'}, scope={envelope.scope_key}. "
+            f"Current local time: {now_local.strftime('%Y-%m-%d %H:%M')} ({self.settings.household_timezone}). "
+            f"Household members: {await self._members_line() or 'unknown'}."
         )
         return f"""You are {self.settings.bot_display_name}, the shared-home assistant for \"{self.settings.home_name}\".
 You are currently operating as the specialist sub-agent: {profile.name} ({profile.id}).
@@ -266,11 +283,11 @@ Rules:
 
         async with asyncio.timeout(55):
             for _ in range(8):
-                response = await self.client.chat.completions.create(
+                response = await create_completion(
+                    self.client,
                     model=self.settings.openai_model,
                     messages=messages,
                     tools=self._tool_specs_for(envelope),
-                    tool_choice="auto",
                     temperature=0.2,
                 )
                 message = response.choices[0].message

@@ -15,6 +15,7 @@ from app.proactive import (
     reminder_add,
     reminder_cancel,
     reminder_list,
+    resolve_member,
     to_utc_iso,
 )
 from app.store_v2 import Store
@@ -178,6 +179,50 @@ async def test_quiet_hours_defer_brief_but_fire_reminder(tmp_path: Path) -> None
 
     await engine.tick(dt.datetime(2026, 7, 23, 4, 31, tzinfo=dt.timezone.utc))  # 07:31 — quiet over
     assert any("בוקר טוב" in text for _, text in bot.sent)
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_resolve_member_by_name(tmp_path: Path) -> None:
+    store = await make_store(tmp_path)
+    await store.bootstrap_household("Home", "Asia/Jerusalem", [7956782005, 8094812958])
+    await store.upsert_member_profile(8094812958, "ליסיה", "lisya")
+    await store.upsert_member_profile(7956782005, "Yishai", "yishaik")
+    hit = await resolve_member(store, "ליסיה")
+    assert hit == {"user_id": 8094812958, "name": "ליסיה"}
+    assert (await resolve_member(store, "lisya"))["user_id"] == 8094812958
+    assert await resolve_member(store, "nobody") is None
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_targeted_reminder_delivers_to_one_member(tmp_path: Path) -> None:
+    store = await make_store(tmp_path)
+    await store.upsert_member_profile(8094812958, "ליסיה", "lisya")
+    engine, bot = make_engine(store)
+    await reminder_add(store, engine.settings, text="לצלם את מה שאת מוכרת",
+                       due_at="2026-07-23T09:00:00", created_by=7956782005, target_user_id=8094812958)
+    await engine.tick(dt.datetime(2026, 7, 23, 6, 1, tzinfo=dt.timezone.utc))
+    assert bot.sent == [(8094812958, "⏰ תזכורת: לצלם את מה שאת מוכרת")]
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_undeliverable_targeted_reminder_notifies_creator(tmp_path: Path) -> None:
+    store = await make_store(tmp_path)
+    engine, bot = make_engine(store)
+
+    async def failing_send(*, chat_id: int, text: str) -> None:
+        if chat_id == 999:  # recipient never opened the bot
+            raise RuntimeError("Chat not found")
+        bot.sent.append((chat_id, text))
+
+    bot.send_message = failing_send  # type: ignore[assignment]
+    await reminder_add(store, engine.settings, text="בדיקה", due_at="2026-07-23T09:00:00",
+                       created_by=7956782005, target_user_id=999)
+    await engine.tick(dt.datetime(2026, 7, 23, 6, 1, tzinfo=dt.timezone.utc))
+    # creator (7956782005) is warned; nothing delivered to 999
+    assert any(chat == 7956782005 and "לא הצלחתי לשלוח" in text for chat, text in bot.sent)
     await store.close()
 
 
