@@ -28,7 +28,8 @@ class DriveBoundaryError(RuntimeError):
 
 
 def _safe_name(value: str) -> str:
-    name = Path((value or "").strip()).name.strip()
+    normalized = (value or "").replace("\\", "/").strip()
+    name = Path(normalized).name.strip()
     if not name or name in {".", ".."}:
         raise ValueError("A valid file or folder name is required")
     return name[:240]
@@ -76,6 +77,11 @@ class DriveService:
         self._root_id: str | None = None
         self._known_descendants: set[str] = set()
         self._lock = asyncio.Lock()
+
+    def reset_credentials(self) -> None:
+        """Drop cached Google clients after OAuth credentials are replaced."""
+        self._service = None
+        self._credentials_key = None
 
     async def _effective_settings(self) -> Settings:
         if self.settings.google_refresh_token:
@@ -335,18 +341,24 @@ class DriveService:
         self._known_descendants.add(str(item["id"]))
         return _item_payload(item)
 
-    async def delete(self, file_id: str) -> None:
+    async def delete(self, file_id: str) -> dict[str, Any]:
         root = await self.ensure_root()
         if file_id == root["id"]:
             raise DriveBoundaryError("The household root folder cannot be deleted")
-        await self._assert_in_root(file_id)
+        item = await self._assert_in_root(file_id)
         drive = await self._drive()
         try:
-            await asyncio.to_thread(
-                lambda: drive.files().delete(fileId=file_id, supportsAllDrives=True).execute()
+            trashed = await asyncio.to_thread(
+                lambda: drive.files().update(
+                    fileId=file_id,
+                    body={"trashed": True},
+                    fields="id,name,mimeType,size,createdTime,modifiedTime,webViewLink,webContentLink,thumbnailLink,parents,trashed",
+                    supportsAllDrives=True,
+                ).execute()
             )
         except HttpError as exc:
             if getattr(exc.resp, "status", None) == 404:
                 raise FileNotFoundError(file_id) from exc
-            raise DriveUnavailableError("Google Drive delete failed") from exc
+            raise DriveUnavailableError("Google Drive trash operation failed") from exc
         self._known_descendants.discard(file_id)
+        return _item_payload(trashed or item)
