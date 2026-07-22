@@ -102,7 +102,7 @@ def create_app() -> FastAPI:
         await tg_app.shutdown()
         await store.close()
 
-    api = FastAPI(title="Shared Home Bot", version="2.2.0", lifespan=lifespan)
+    api = FastAPI(title="Shared Home Bot", version="2.3.0", lifespan=lifespan)
     api.include_router(build_api_router(settings, store, service))
     api.include_router(build_files_router(settings, store, drive))
 
